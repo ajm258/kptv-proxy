@@ -221,7 +221,7 @@ func processVODBatchWorker(batch []XCVODStream, vodInclude, vodExclude *regexp.R
 		streamURL := fmt.Sprintf("%s/movie/%s/%s/%d.ts", source.URL, source.Username, source.Password, stream.StreamID)
         group := "vod"
 
-        if categoryName, ok := vodCategoryLookup[stream.CategoryID]; ok && categoryName != "" {
+        if categoryName, ok := categoryLookup[stream.CategoryID]; ok && categoryName != "" {
             group = categoryName
          }
 		// setup the stream
