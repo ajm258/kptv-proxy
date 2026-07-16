@@ -91,7 +91,7 @@ type xcSeriesWork struct {
 //
 // Returns:
 //   - []*types.Stream: slice of processed streams ready for channel aggregation
-func processLiveBatchWorker(batch []XCLiveStream, liveInclude, liveExclude *regexp.Regexp, source *config.SourceConfig, categoryLookup map[string]string) []*types.Stream {
+func processLiveBatchWorker(batch []XCLiveStream, liveInclude, liveExclude *regexp.Regexp, source *config.SourceConfig, liveCategoryLookup map[string]string) []*types.Stream {
 	results := make([]*types.Stream, 0, len(batch))
 	logger.Debug("{parser/xtremecodes - processLiveBatchWorker} process the live batch")
 
@@ -202,6 +202,55 @@ func processSeriesBatchWorker(batch []XCSeries, seriesInclude, seriesExclude *re
 	return results
 }
 
+//------------------------
+
+func processVODBatchWorker(batch []XCVODStream, vodInclude, vodExclude *regexp.Regexp, source *config.SourceConfig, categoryLookup map[string]string) []*types.Stream {
+	results := make([]*types.Stream, 0, len(batch))
+	logger.Debug("{parser/xtremecodes - processVODBatchWorker} process the VOD batch")
+
+	// loop the stream objects
+	for _, stream := range batch {
+		if vodInclude != nil && !vodInclude.MatchString(stream.Name) {
+			continue
+		}
+		if vodExclude != nil && vodExclude.MatchString(stream.Name) {
+			continue
+		}
+    
+		// setup the stream url
+		streamURL := fmt.Sprintf("%s/movie/%s/%s/%d.ts", source.URL, source.Username, source.Password, stream.StreamID)
+        group := "vod"
+
+        if categoryName, ok := categoryLookup[stream.CategoryID]; ok && categoryName != "" {
+            group = categoryName
+         }
+		// setup the stream
+		s := &types.Stream{
+			URL:    streamURL,
+			Name:   stream.Name,
+			Source: source,
+			Attributes: map[string]string{
+				"tvg-name":    stream.Name,
+				"group-title": group,
+				"tvg-id":      fmt.Sprintf("%d", stream.StreamID),
+				"category-id": stream.CategoryID,
+			},
+		}
+		// if theres a logo
+		if stream.StreamIcon != "" {
+			s.Attributes["tvg-logo"] = stream.StreamIcon
+		}
+		logger.Debug("{parser/xtremecodes - processVODBatchWorker} process the VOD stream %v", stream.Name)
+		results = append(results, s)
+	}
+	logger.Debug("{parser/xtremecodes - processVODBatchWorker} VOD batch results")
+	return results
+}
+
+
+
+
+//------------------------
 // ParseXtremeCodesAPI fetches and parses content from all three Xtreme Codes API endpoints
 // (live streams, series, and VOD), aggregating the results into a unified stream collection
 // with proper URL construction and metadata mapping. This function serves as the primary
@@ -239,7 +288,7 @@ func ParseXtremeCodesAPI(httpClient *client.HeaderSettingClient, cfg *config.Con
 	defer cancel()
 
 	// setup the filters and error
-	var liveInclude, liveExclude, seriesInclude, seriesExclude *regexp.Regexp
+	var liveInclude, liveExclude, vodInclude, vodExclude, seriesInclude, seriesExclude *regexp.Regexp
 	var err error
 
 	// the filters
@@ -255,6 +304,21 @@ func ParseXtremeCodesAPI(httpClient *client.HeaderSettingClient, cfg *config.Con
 			logger.Error("{parser/xtremecodes - ParseXtremeCodesAPI} Invalid LiveExcludeRegex: %v", err)
 		}
 	}
+	//------------
+    if source.VODIncludeRegex != "" {
+	    vodInclude, err = regexp.Compile(source.VODIncludeRegex)
+	    if err != nil {
+		    logger.Error("{parser/xtremecodes - ParseXtremeCodesAPI} Invalid VODIncludeRegex: %v", err)
+	    }
+    }
+
+    if source.VODExcludeRegex != "" {
+	    vodExclude, err = regexp.Compile(source.VODExcludeRegex)
+	    if err != nil {
+		    logger.Error("{parser/xtremecodes - ParseXtremeCodesAPI} Invalid VODExcludeRegex: %v", err)
+	    }
+    }
+	//-----------
 	if source.SeriesIncludeRegex != "" {
 		seriesInclude, err = regexp.Compile(source.SeriesIncludeRegex)
 		if err != nil {
@@ -280,7 +344,7 @@ func ParseXtremeCodesAPI(httpClient *client.HeaderSettingClient, cfg *config.Con
 
 	liveCategories := fetchXCLiveCategories(httpClient, cfg, source, rateLimiter)
     logger.Debug("{parser/xtremecodes - ParseXtremeCodesAPI} Fetched %d live categories", len(liveCategories))
-/*     categoryLookup := make(map[string]string)
+  /*     categoryLookup := make(map[string]string)
 
     for _, category := range liveCategories {
 	  categoryLookup[category.CategoryID] = category.CategoryName
@@ -288,13 +352,31 @@ func ParseXtremeCodesAPI(httpClient *client.HeaderSettingClient, cfg *config.Con
 
     logger.Debug("{parser/xtremecodes - ParseXtremeCodesAPI} Built category lookup with %d entries", len(categoryLookup))
 
- */	//---------
+  */	//---------
 	liveCategoryLookup := buildCategoryLookup(liveCategories)
 
     logger.Debug(
 	     "{parser/xtremecodes - ParseXtremeCodesAPI} Built category lookup with %d entries",
 	     len(liveCategoryLookup),
      )
+
+	vodCategories := fetchXCVODCategories(httpClient, cfg, source, rateLimiter)
+    logger.Debug("{parser/xtremecodes - ParseXtremeCodesAPI} Fetched %d VOD categories", len(vodCategories))
+
+    vodCategoryLookup := buildCategoryLookup(vodCategories)
+
+    logger.Debug(
+       "{parser/xtremecodes - ParseXtremeCodesAPI} Built VOD category lookup with %d entries",
+       len(vodCategoryLookup),
+     )
+
+    vodStreams := fetchXCVODStreams(httpClient, cfg, source, rateLimiter)
+    logger.Debug(
+            "{parser/xtremecodes - ParseXtremeCodesAPI} Fetched %d VOD streams",
+             len(vodStreams),
+        )
+
+	
 
 	// if we actually have live streams
 	if len(liveStreams) > 0 {
@@ -318,7 +400,7 @@ func ParseXtremeCodesAPI(httpClient *client.HeaderSettingClient, cfg *config.Con
 					default:
 					}
 					logger.Debug("{parser/xtremecodes - ParseXtremeCodesAPI} process the live batch %v", i)
-					results := processLiveBatchWorker(work.streams, liveInclude, liveExclude, source, categoryLookup)
+					results := processLiveBatchWorker(work.streams, liveInclude, liveExclude, source, liveCategoryLookup)
 					resultsChan <- results
 				}
 			}()
@@ -358,6 +440,77 @@ func ParseXtremeCodesAPI(httpClient *client.HeaderSettingClient, cfg *config.Con
 		return allStreams
 	default:
 	}
+    // if we actually have vod streams
+    // if there are VOD streams
+	if len(vodStreams) > 0 {
+	
+		const batchSize = 1000
+		workers := cfg.WorkerThreads
+	
+		workChan := make(chan []XCVODStream, workers)
+		resultsChan := make(chan []*types.Stream, workers)
+	
+		var wg sync.WaitGroup
+	
+		for i := 0; i < workers; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+	
+				for batch := range workChan {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
+	
+					results := processVODBatchWorker(
+						batch,
+						vodInclude,
+						vodExclude,
+						source,
+						vodCategoryLookup,
+					)
+	
+					resultsChan <- results
+				}
+			}()
+		}
+	
+		go func() {
+			for i := 0; i < len(vodStreams); i += batchSize {
+				end := i + batchSize
+				if end > len(vodStreams) {
+					end = len(vodStreams)
+				}
+	
+				workChan <- vodStreams[i:end]
+			}
+	
+			close(workChan)
+		}()
+	
+		go func() {
+			wg.Wait()
+			close(resultsChan)
+		}()
+	
+		for results := range resultsChan {
+			allStreamsMu.Lock()
+			allStreams = append(allStreams, results...)
+			allStreamsMu.Unlock()
+		}
+	
+		logger.Debug(
+			"{parser/xtremecodes - ParseXtremeCodesAPI} VOD completed: total streams now %d",
+			len(allStreams),
+		)
+	}
+		
+		
+
+	//
+
 
 	logger.Debug("{parser/xtremecodes - ParseXtremeCodesAPI} Starting series fetch")
 	series := fetchXCSeries(httpClient, cfg, source, rateLimiter)
@@ -616,6 +769,58 @@ func fetchXCLiveCategories(httpClient *client.HeaderSettingClient, cfg *config.C
 	   "get_live_categories",
    )
 }
+
+
+//------------------------
+
+
+func fetchXCVODCategories(httpClient *client.HeaderSettingClient, cfg *config.Config, source *config.SourceConfig, rateLimiter ratelimit.Limiter) []XCCategory {
+
+	// Apply rate limiting before making API request to prevent server overload
+	if rateLimiter != nil {
+		rateLimiter.Take()
+		logger.Debug("{parser/xtremecodes - fetchXCVODCategories} Applied rate limit for XC VOD categories request: %s", source.Name)
+	}
+
+	// Construct API URL for VOD categories endpoint with authentication parameters
+    return fetchXCCategories(
+	   httpClient,
+	   cfg,
+	   source,
+	   "get_vod_categories",
+   )
+}
+
+
+
+
+//------------------------
+
+
+//------------------------
+
+
+func fetchXCSeriesCategories(httpClient *client.HeaderSettingClient, cfg *config.Config, source *config.SourceConfig, rateLimiter ratelimit.Limiter) []XCCategory {
+
+	// Apply rate limiting before making API request to prevent server overload
+	if rateLimiter != nil {
+		rateLimiter.Take()
+		logger.Debug("{parser/xtremecodes - fetchXCSeriesCategories} Applied rate limit for XC series categories request: %s", source.Name)
+	}
+
+	// Construct API URL for series categories endpoint with authentication parameters
+    return fetchXCCategories(
+	   httpClient,
+	   cfg,
+	   source,
+	   "get_series_categories",
+   )
+}
+
+
+
+
+//------------------------
 
 func buildCategoryLookup(categories []XCCategory) map[string]string {
 	lookup := make(map[string]string)
