@@ -289,11 +289,11 @@ func ParseXtremeCodesAPI(httpClient *client.HeaderSettingClient, cfg *config.Con
     logger.Debug("{parser/xtremecodes - ParseXtremeCodesAPI} Built category lookup with %d entries", len(categoryLookup))
 
  */	//---------
-	categoryLookup := buildCategoryLookup(liveCategories)
+	liveCategoryLookup := buildCategoryLookup(liveCategories)
 
     logger.Debug(
 	     "{parser/xtremecodes - ParseXtremeCodesAPI} Built category lookup with %d entries",
-	     len(categoryLookup),
+	     len(liveCategoryLookup),
      )
 
 	// if we actually have live streams
@@ -518,6 +518,35 @@ func fetchXCDataWithContext[T any](ctx context.Context, httpClient *client.Heade
 	return data, nil
 }
 
+//----------------------------------
+
+func fetchXCCategories(
+	httpClient *client.HeaderSettingClient,
+	cfg *config.Config,
+	source *config.SourceConfig,
+	action string,
+) []XCCategory {
+
+
+	url := fmt.Sprintf(
+		"%s/player_api.php?username=%s&password=%s&action=%s",
+		source.URL,
+		source.Username,
+		source.Password,
+		action,
+	)
+
+	categories, err := fetchXCData[XCCategory](httpClient, cfg, source, url)
+	if err != nil {
+		logger.Error("{parser/xtremecodes - fetchXCCategories} Failed to fetch %s: %v", action, err)
+		return nil
+	}
+
+	return categories
+}
+
+
+//----------------------------------
 // fetchXCLiveStreams retrieves live television stream data from the Xtreme Codes API
 // get_live_streams endpoint, implementing proper rate limiting, error handling, and
 // debug logging. The function constructs the appropriate API URL with authentication
@@ -580,17 +609,12 @@ func fetchXCLiveCategories(httpClient *client.HeaderSettingClient, cfg *config.C
 	}
 
 	// Construct API URL for live categories endpoint with authentication parameters
-	url := fmt.Sprintf("%s/player_api.php?username=%s&password=%s&action=get_live_categories", source.URL, source.Username, source.Password)
-
-	// Execute generic API data fetching with proper error handling
-	categories, err := fetchXCData[XCCategory](httpClient, cfg, source, url)
-	if err != nil {
-		logger.Error("{parser/xtremecodes - fetchXCLiveCategories} Failed to fetch XC live categories from %s: %v", utils.LogURL(cfg, source.URL), err)
-		return nil
-	}
-
-	logger.Debug("{parser/xtremecodes - fetchXCLiveCategories} Successfully fetched %d live categories from XC API", len(categories))
-	return categories
+    return fetchXCCategories(
+	   httpClient,
+	   cfg,
+	   source,
+	   "get_live_categories",
+   )
 }
 
 func buildCategoryLookup(categories []XCCategory) map[string]string {
