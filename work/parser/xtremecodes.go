@@ -117,7 +117,7 @@ func processLiveBatchWorker(batch []XCLiveStream, liveInclude, liveExclude *rege
         }
         
         // Override with the original Xtream category if available
-        if categoryName, ok := categoryLookup[stream.CategoryID]; ok && categoryName != "" {
+        if categoryName, ok := liveCategoryLookup[stream.CategoryID]; ok && categoryName != "" {
         	group = categoryName
         }
 
@@ -221,7 +221,7 @@ func processVODBatchWorker(batch []XCVODStream, vodInclude, vodExclude *regexp.R
 		streamURL := fmt.Sprintf("%s/movie/%s/%s/%d.ts", source.URL, source.Username, source.Password, stream.StreamID)
         group := "vod"
 
-        if categoryName, ok := categoryLookup[stream.CategoryID]; ok && categoryName != "" {
+        if categoryName, ok := vodCategoryLookup[stream.CategoryID]; ok && categoryName != "" {
             group = categoryName
          }
 		// setup the stream
