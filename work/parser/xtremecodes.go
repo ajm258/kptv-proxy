@@ -30,9 +30,9 @@ type XCLiveStream struct {
 	EpgChannelID string `json:"epg_channel_id"` // EPG channel identifier for program guide integration
 }
 
-// XCLiveCategory represents a live TV category returned by the
+// XCCategory represents a live TV category returned by the
 // Xtreme Codes get_live_categories endpoint.
-type XCLiveCategory struct {
+type XCCategory struct {
 	CategoryID   string `json:"category_id"`   // Unique category identifier
 	CategoryName string `json:"category_name"` // Human-readable category name
 }
@@ -280,15 +280,21 @@ func ParseXtremeCodesAPI(httpClient *client.HeaderSettingClient, cfg *config.Con
 
 	liveCategories := fetchXCLiveCategories(httpClient, cfg, source, rateLimiter)
     logger.Debug("{parser/xtremecodes - ParseXtremeCodesAPI} Fetched %d live categories", len(liveCategories))
-    categoryLookup := make(map[string]string)
+/*     categoryLookup := make(map[string]string)
 
     for _, category := range liveCategories {
 	  categoryLookup[category.CategoryID] = category.CategoryName
     }
 
     logger.Debug("{parser/xtremecodes - ParseXtremeCodesAPI} Built category lookup with %d entries", len(categoryLookup))
-	//---------
 
+ */	//---------
+	categoryLookup := buildCategoryLookup(liveCategories)
+
+    logger.Debug(
+	     "{parser/xtremecodes - ParseXtremeCodesAPI} Built category lookup with %d entries",
+	     len(categoryLookup),
+     )
 
 	// if we actually have live streams
 	if len(liveStreams) > 0 {
@@ -564,8 +570,8 @@ func fetchXCLiveStreams(httpClient *client.HeaderSettingClient, cfg *config.Conf
 //   - rateLimiter: rate limiter for controlling API request frequency
 //
 // Returns:
-//   - []XCLiveCategory: array of live category objects from API response, or nil on error
-func fetchXCLiveCategories(httpClient *client.HeaderSettingClient, cfg *config.Config, source *config.SourceConfig, rateLimiter ratelimit.Limiter) []XCLiveCategory {
+//   - []XCCategory: array of live category objects from API response, or nil on error
+func fetchXCLiveCategories(httpClient *client.HeaderSettingClient, cfg *config.Config, source *config.SourceConfig, rateLimiter ratelimit.Limiter) []XCCategory {
 
 	// Apply rate limiting before making API request to prevent server overload
 	if rateLimiter != nil {
@@ -577,7 +583,7 @@ func fetchXCLiveCategories(httpClient *client.HeaderSettingClient, cfg *config.C
 	url := fmt.Sprintf("%s/player_api.php?username=%s&password=%s&action=get_live_categories", source.URL, source.Username, source.Password)
 
 	// Execute generic API data fetching with proper error handling
-	categories, err := fetchXCData[XCLiveCategory](httpClient, cfg, source, url)
+	categories, err := fetchXCData[XCCategory](httpClient, cfg, source, url)
 	if err != nil {
 		logger.Error("{parser/xtremecodes - fetchXCLiveCategories} Failed to fetch XC live categories from %s: %v", utils.LogURL(cfg, source.URL), err)
 		return nil
@@ -587,7 +593,15 @@ func fetchXCLiveCategories(httpClient *client.HeaderSettingClient, cfg *config.C
 	return categories
 }
 
+func buildCategoryLookup(categories []XCCategory) map[string]string {
+	lookup := make(map[string]string)
 
+	for _, category := range categories {
+		lookup[category.CategoryID] = category.CategoryName
+	}
+
+	return lookup
+}
 
 //------------------------
 // fetchXCSeries retrieves television series data from the Xtreme Codes API
