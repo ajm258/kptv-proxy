@@ -131,7 +131,7 @@ func processLiveBatchWorker(batch []XCLiveStream, liveInclude, liveExclude *rege
 				"group-title": group,
 				"tvg-id":      fmt.Sprintf("%d", stream.StreamID),
 				"category-id": stream.CategoryID,
-				"content-type": "live"
+				"content-type": "live",
 			},
 		}
 
