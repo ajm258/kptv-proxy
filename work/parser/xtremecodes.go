@@ -218,9 +218,19 @@ func processVODBatchWorker(batch []XCVODStream, vodInclude, vodExclude *regexp.R
 		if vodExclude != nil && vodExclude.MatchString(stream.Name) {
 			continue
 		}
-    
+        ext := stream.ContainerExtension
+			if ext == "" {
+				ext = "mp4" // or "ts" if you want to preserve existing fallback behaviour
+		}
+
+        logger.Debug(
+			"{parser/xtremecodes - processVODBatchWorker} Stream %s uses extension %s",
+			stream.Name,
+			stream.ContainerExtension,
+		)
+
 		// setup the stream url
-		streamURL := fmt.Sprintf("%s/movie/%s/%s/%d.ts", source.URL, source.Username, source.Password, stream.StreamID)
+		streamURL := fmt.Sprintf("%s/movie/%s/%s/%d.%s", source.URL, source.Username, source.Password, stream.StreamID, ext)
         group := "vod"
 
         if categoryName, ok := categoryLookup[stream.CategoryID]; ok && categoryName != "" {
