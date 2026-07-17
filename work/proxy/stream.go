@@ -424,7 +424,35 @@ func (sp *StreamProxy) GeneratePlaylist(w http.ResponseWriter, r *http.Request, 
 			cleanName := strings.Trim(ch.name, "\"")
 			playlist.WriteString(fmt.Sprintf(",%s\n", cleanName))
 			safeName := utils.SanitizeChannelName(ch.name)
-			proxyURL := fmt.Sprintf("%s/s/%s/%s/%s", sp.Config.BaseURL, account.Username, account.Password, safeName)
+			contentType := getChannelContentType(ch)
+
+            var proxyURL string
+
+			switch contentType {
+			case "vod":
+				proxyURL = fmt.Sprintf("%s/movie/%s/%s/%s",
+					sp.Config.BaseURL,
+					account.Username,
+					account.Password,
+					safeName,
+				)
+			case "series":
+				proxyURL = fmt.Sprintf("%s/series/%s/%s/%s",
+					sp.Config.BaseURL,
+					account.Username,
+					account.Password,
+					safeName,
+				)
+			default:
+				proxyURL = fmt.Sprintf("%s/s/%s/%s/%s",
+					sp.Config.BaseURL,
+					account.Username,
+					account.Password,
+					safeName,
+				)
+			}
+
+			//proxyURL := fmt.Sprintf("%s/s/%s/%s/%s", sp.Config.BaseURL, account.Username, account.Password, safeName)
 			playlist.WriteString(proxyURL)
 			playlist.WriteByte('\n')
 		}
