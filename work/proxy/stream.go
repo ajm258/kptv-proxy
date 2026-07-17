@@ -434,6 +434,14 @@ func (sp *StreamProxy) GeneratePlaylist(w http.ResponseWriter, r *http.Request, 
 				}
 			}
 
+            streamID := safeName // Default for live streams
+
+			if ch.channel != nil && len(ch.channel.Streams) > 0 {
+				if id, ok := ch.channel.Streams[0].Attributes["tvg-id"]; ok && id != "" {
+					streamID = id + ".mkv"
+				}
+			}
+
 
             var proxyURL string
 
@@ -443,14 +451,14 @@ func (sp *StreamProxy) GeneratePlaylist(w http.ResponseWriter, r *http.Request, 
 					sp.Config.BaseURL,
 					account.Username,
 					account.Password,
-					safeName,
+					streamID,
 				)
 			case "series":
 				proxyURL = fmt.Sprintf("%s/series/%s/%s/%s",
 					sp.Config.BaseURL,
 					account.Username,
 					account.Password,
-					safeName,
+					streamID,
 				)
 			default:
 				proxyURL = fmt.Sprintf("%s/s/%s/%s/%s",
