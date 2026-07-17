@@ -424,7 +424,16 @@ func (sp *StreamProxy) GeneratePlaylist(w http.ResponseWriter, r *http.Request, 
 			cleanName := strings.Trim(ch.name, "\"")
 			playlist.WriteString(fmt.Sprintf(",%s\n", cleanName))
 			safeName := utils.SanitizeChannelName(ch.name)
-			contentType := getChannelContentType(ch)
+			//contentType := getChannelContentType(ch)
+            
+			contentType := "live"
+
+			if len(ch.Streams) > 0 {
+				if ct, ok := ch.Streams[0].Attributes["content-type"]; ok && ct != "" {
+					contentType = ct
+				}
+			}
+
 
             var proxyURL string
 
