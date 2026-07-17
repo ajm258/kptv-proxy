@@ -131,6 +131,7 @@ func processLiveBatchWorker(batch []XCLiveStream, liveInclude, liveExclude *rege
 				"group-title": group,
 				"tvg-id":      fmt.Sprintf("%d", stream.StreamID),
 				"category-id": stream.CategoryID,
+				"content-type": "live"
 			},
 		}
 
@@ -189,6 +190,7 @@ func processSeriesBatchWorker(batch []XCSeries, seriesInclude, seriesExclude *re
 				"group-title": "series",
 				"tvg-id":      fmt.Sprintf("%d", serie.SeriesID),
 				"category-id": serie.CategoryID,
+				"content-type": "series",
 			},
 		}
 		// if theres a logo
@@ -234,6 +236,7 @@ func processVODBatchWorker(batch []XCVODStream, vodInclude, vodExclude *regexp.R
 				"group-title": group,
 				"tvg-id":      fmt.Sprintf("%d", stream.StreamID),
 				"category-id": stream.CategoryID,
+				"content-type": "vod",
 			},
 		}
 		// if theres a logo
