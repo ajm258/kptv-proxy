@@ -428,8 +428,8 @@ func (sp *StreamProxy) GeneratePlaylist(w http.ResponseWriter, r *http.Request, 
             
 			contentType := "live"
 
-			if len(ch.Streams) > 0 {
-				if ct, ok := ch.Streams[0].Attributes["content-type"]; ok && ct != "" {
+			if ch.channel != nil && len(ch.channel.Streams) > 0 {
+				if ct, ok := ch.channel.Streams[0].Attributes["content-type"]; ok && ct != "" {
 					contentType = ct
 				}
 			}
