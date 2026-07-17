@@ -215,6 +215,7 @@ func getChannelContentType(ch *types.Channel) string {
 	if group == "vod" || strings.Contains(group, "vod") || strings.Contains(group, "movie") {
 		return "vod"
 	}
+
 	return "live"
 }
 
@@ -521,6 +522,8 @@ func HandleXCStream(sp *proxy.StreamProxy) http.HandlerFunc {
 			http.Error(w, "Stream not found", http.StatusNotFound)
 			return
 		}
+
+        logger.Info("Range: %s", r.Header.Get("Range"))
 
 		logger.Debug("{handlers/xcoutput - HandleXCStream} XC stream: account=%s, id=%d, channel=%s",
 			account.Name, streamID, channelName)
