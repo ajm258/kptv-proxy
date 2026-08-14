@@ -198,13 +198,24 @@ func getChannelContentType(ch *types.Channel) string {
 	if len(ch.Streams) == 0 {
 		return "live"
 	}
-	group := strings.ToLower(ch.Streams[0].Attributes["group-title"])
+
+	attrs := ch.Streams[0].Attributes
+
+	// Prefer the explicit content type added by the parser.
+	if ct, ok := attrs["content-type"]; ok && ct != "" {
+		return ct
+	}
+
+	// Fallback for imported M3U playlists and older data.
+	group := strings.ToLower(attrs["group-title"])
+
 	if group == "series" || strings.Contains(group, "series") {
 		return "series"
 	}
 	if group == "vod" || strings.Contains(group, "vod") || strings.Contains(group, "movie") {
 		return "vod"
 	}
+
 	return "live"
 }
 
@@ -511,6 +522,8 @@ func HandleXCStream(sp *proxy.StreamProxy) http.HandlerFunc {
 			http.Error(w, "Stream not found", http.StatusNotFound)
 			return
 		}
+
+        logger.Info("Range: %s", r.Header.Get("Range"))
 
 		logger.Debug("{handlers/xcoutput - HandleXCStream} XC stream: account=%s, id=%d, channel=%s",
 			account.Name, streamID, channelName)

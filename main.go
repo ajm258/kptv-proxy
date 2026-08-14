@@ -15,7 +15,7 @@ import (
 	"kptv-proxy/work/logger"
 	"kptv-proxy/work/users"
 	"kptv-proxy/work/utils"
-	//_ "net/http/pprof"
+  _ "net/http/pprof"
 )
 
 func main() {
@@ -103,6 +103,12 @@ func main() {
 		}
 	}()
 
+	go func() {
+		logger.Info("{pprof} Starting pprof server on :6060")
+		if err := http.ListenAndServe("0.0.0.0:6060", nil); err != nil {
+			logger.Error("{pprof} %v", err)
+		}
+	}()
 	// Block until SIGINT or SIGTERM is received, then cleanly stop watchers, import loop, and cache
 	a.WaitForShutdown()
 }

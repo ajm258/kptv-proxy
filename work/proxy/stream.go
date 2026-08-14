@@ -424,7 +424,52 @@ func (sp *StreamProxy) GeneratePlaylist(w http.ResponseWriter, r *http.Request, 
 			cleanName := strings.Trim(ch.name, "\"")
 			playlist.WriteString(fmt.Sprintf(",%s\n", cleanName))
 			safeName := utils.SanitizeChannelName(ch.name)
-			proxyURL := fmt.Sprintf("%s/s/%s/%s/%s", sp.Config.BaseURL, account.Username, account.Password, safeName)
+			//contentType := getChannelContentType(ch)
+            
+			contentType = "live"
+
+			if ch.channel != nil && len(ch.channel.Streams) > 0 {
+				if ct, ok := ch.channel.Streams[0].Attributes["content-type"]; ok && ct != "" {
+					contentType = ct
+				}
+			}
+
+            streamID := safeName // Default for live streams
+
+			if ch.channel != nil && len(ch.channel.Streams) > 0 {
+				if id, ok := ch.channel.Streams[0].Attributes["tvg-id"]; ok && id != "" {
+					streamID = id + ".mkv"
+				}
+			}
+
+
+            var proxyURL string
+
+			switch contentType {
+			case "vod":
+				proxyURL = fmt.Sprintf("%s/movie/%s/%s/%s",
+					sp.Config.BaseURL,
+					account.Username,
+					account.Password,
+					streamID,
+				)
+			case "series":
+				proxyURL = fmt.Sprintf("%s/series/%s/%s/%s",
+					sp.Config.BaseURL,
+					account.Username,
+					account.Password,
+					streamID,
+				)
+			default:
+				proxyURL = fmt.Sprintf("%s/s/%s/%s/%s",
+					sp.Config.BaseURL,
+					account.Username,
+					account.Password,
+					safeName,
+				)
+			}
+
+			//proxyURL := fmt.Sprintf("%s/s/%s/%s/%s", sp.Config.BaseURL, account.Username, account.Password, safeName)
 			playlist.WriteString(proxyURL)
 			playlist.WriteByte('\n')
 		}
