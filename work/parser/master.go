@@ -13,6 +13,9 @@ import (
 	"strings"
 )
 
+// attributePattern matches KEY=VALUE pairs with optional quoted values.
+var attributePattern = regexp.MustCompile(`([A-Z-]+)=([^,]+|"[^"]*")`)
+
 // StreamVariant represents a single stream variant from an HLS master playlist with
 // comprehensive metadata for quality assessment and selection. Each variant corresponds
 // to a different encoding quality/bitrate of the same content, allowing clients or
@@ -288,10 +291,8 @@ func (mph *MasterPlaylistHandler) parseStreamInf(line string) (StreamVariant, er
 func (mph *MasterPlaylistHandler) parseAttributes(params string) map[string]string {
 	attributes := make(map[string]string)
 
-	// Regex pattern to match KEY=VALUE pairs with optional quoted values
 	// Handles both: KEY=value and KEY="quoted value with spaces"
-	re := regexp.MustCompile(`([A-Z-]+)=([^,]+|"[^"]*")`)
-	matches := re.FindAllStringSubmatch(params, -1)
+	matches := attributePattern.FindAllStringSubmatch(params, -1)
 
 	// Extract each matched key-value pair
 	for _, match := range matches {
