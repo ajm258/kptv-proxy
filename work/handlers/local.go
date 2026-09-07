@@ -1,10 +1,8 @@
-// work/handlers/local.go
 package handlers
 
 import (
 	"database/sql"
 	"kptv-proxy/work/config"
-	"kptv-proxy/work/db"
 	"kptv-proxy/work/localscan"
 	"kptv-proxy/work/logger"
 	"kptv-proxy/work/proxy"
@@ -96,7 +94,7 @@ func HandleLocalArtwork(sp *proxy.StreamProxy) http.HandlerFunc {
 			return
 		}
 
-		if !pathWithinSource(entry.LocalSourceID, art) {
+		if !localscan.PathWithinSource(entry.LocalSourceID, art) {
 			logger.Warn("{handlers/local - HandleLocalArtwork} artwork outside source root, refusing: %s", art)
 			http.Error(w, "Not found", http.StatusNotFound)
 			return
@@ -132,36 +130,12 @@ func resolveLocalEntry(hash string) (*localscan.MediaEntry, bool) {
 		return nil, false
 	}
 
-	if !pathWithinSource(entry.LocalSourceID, entry.Path) {
+	if !localscan.PathWithinSource(entry.LocalSourceID, entry.Path) {
 		logger.Warn("{handlers/local - resolveLocalEntry} entry path outside source root, refusing: %s", entry.Path)
 		return nil, false
 	}
 
 	return entry, true
-}
-
-// pathWithinSource reports whether path resolves inside the configured root of
-// the given local source, after symlink resolution.
-func pathWithinSource(localSourceID int64, path string) bool {
-	src, err := db.GetLocalSource(localSourceID)
-	if err != nil {
-		return false
-	}
-
-	root, err := filepath.EvalSymlinks(src.Path)
-	if err != nil {
-		return false
-	}
-	target, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return false
-	}
-
-	rel, err := filepath.Rel(root, target)
-	if err != nil {
-		return false
-	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // serveLocalFile streams a file from disk with range and conditional request

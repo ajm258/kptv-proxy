@@ -87,7 +87,7 @@ type hdhrXMLDevice struct {
 	UDN          string `xml:"UDN"`
 }
 
-// hdhrDeviceID derives a stable 8-hex-char device identifier from the configured
+// HDHRDeviceID derives a stable 8-hex-char device identifier from the configured
 // base URL using FNV32a. Consistent across restarts since it is deterministic.
 func HDHRDeviceID(baseURL string) string {
 	h := fnv.New32a()

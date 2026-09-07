@@ -10,6 +10,7 @@ import (
 	"kptv-proxy/work/utils"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 const localMediaColumns = `
@@ -19,6 +20,11 @@ const localMediaColumns = `
 	fanart, rating, critic_rating, mpaa, country, premiered, imdb_id,
 	tmdb_id, tvdb_id, collection, genres, studios, tags, directors,
 	writers, cast_json, sort_key, mod_time, file_size`
+
+// sourceRoots caches the symlink-resolved root path of each local source,
+// keyed by source ID. Cleared by InvalidateExport, which every write to the
+// local sources already calls.
+var sourceRoots sync.Map
 
 // EntryHash derives the stable stream identity hash for a local media file.
 // The local source ID is folded in so the same path under two sources does
@@ -246,18 +252,43 @@ func DeleteAllForSource(localSourceID int64) error {
 	return nil
 }
 
-// PathWithinSource reports whether path resolves inside the configured root of
-// the given local source, after symlink resolution.
-func PathWithinSource(localSourceID int64, path string) bool {
+// sourceRoot returns the symlink-resolved root of a local source, loading and
+// caching it on first use. Failures are not cached.
+func sourceRoot(localSourceID int64) (string, bool) {
+	if v, ok := sourceRoots.Load(localSourceID); ok {
+		return v.(string), true
+	}
+
 	src, err := db.GetLocalSource(localSourceID)
 	if err != nil {
-		return false
+		return "", false
 	}
 
 	root, err := filepath.EvalSymlinks(src.Path)
 	if err != nil {
+		return "", false
+	}
+
+	sourceRoots.Store(localSourceID, root)
+	return root, true
+}
+
+// invalidateSourceRoots drops every cached resolved source root.
+func invalidateSourceRoots() {
+	sourceRoots.Range(func(k, _ any) bool {
+		sourceRoots.Delete(k)
+		return true
+	})
+}
+
+// PathWithinSource reports whether path resolves inside the configured root of
+// the given local source, after symlink resolution.
+func PathWithinSource(localSourceID int64, path string) bool {
+	root, ok := sourceRoot(localSourceID)
+	if !ok {
 		return false
 	}
+
 	target, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return false

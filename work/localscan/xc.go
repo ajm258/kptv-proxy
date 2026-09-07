@@ -25,6 +25,7 @@ var (
 func InvalidateExport() {
 	exportCache.Store(nil)
 	exportIndex.Store(nil)
+	invalidateSourceRoots()
 }
 
 // exportSnapshot returns the shared export snapshot, loading the library from

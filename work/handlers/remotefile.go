@@ -1,4 +1,3 @@
-// work/handlers/remotefile.go
 package handlers
 
 import (
