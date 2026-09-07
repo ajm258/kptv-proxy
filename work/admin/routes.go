@@ -34,8 +34,8 @@ func SetupAdminRoutes(router *mux.Router, sp *proxy.StreamProxy) {
 	router.HandleFunc("/api/channels/{channel}/kill-stream", authCORS(users.PermStreams, handleKillStream(sp))).Methods("POST", "OPTIONS")
 	router.HandleFunc("/api/channels/{channel}/revive-stream", authCORS(users.PermStreams, handleReviveStream(sp))).Methods("POST", "OPTIONS")
 	router.HandleFunc("/api/channels/{channel}/order", authCORS(users.PermStreams, handleSetChannelOrder(sp))).Methods("POST", "OPTIONS")
-	router.HandleFunc("/api/channels/{channel}/order", authCORS(users.PermStreams, handleResetChannelOrder(sp))).Methods("DELETE")
-
+	router.HandleFunc("/api/channels/{channel}/order", authCORS(users.PermStreams, handleResetChannelOrder(sp))).Methods("DELETE", "OPTIONS")
+	
 	// Log endpoints
 	router.HandleFunc("/api/logs", authCORS(users.PermLogs, middleware.GzipMiddleware(handleGetLogs))).Methods("GET", "OPTIONS")
 	router.HandleFunc("/api/logs", authCORS(users.PermLogs, handleClearLogs)).Methods("DELETE", "OPTIONS")
