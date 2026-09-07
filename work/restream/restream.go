@@ -123,7 +123,7 @@ func (r *Restream) AddClient(id string, w http.ResponseWriter, flusher http.Flus
 		Writer:    w,
 		Flusher:   flusher,
 		Done:      make(chan bool),
-		WriteChan: make(chan []byte, writeChanDepth),
+		WriteChan: make(chan *types.StreamChunk, writeChanDepth),
 	}
 
 	client.LastSeen.Store(time.Now().Unix())
@@ -1053,14 +1053,16 @@ func (r *Restream) streamFromResponse(resp *http.Response, prefix []byte) (bool,
 func (r *Restream) DistributeToClients(data []byte) int {
 	activeClients := 0
 
-	// Copy the chunk once so every client channel holds an independent slice;
-	// the source buffer may be reused by the streaming loop immediately after return.
-	chunk := make([]byte, len(data))
-	copy(chunk, data)
+	// Pooled refcounted copy so every client channel holds the same buffer
+	// independently of the streaming loop, which reuses its read buffer
+	// immediately after return.
+	chunk := types.NewStreamChunk(data)
+	defer chunk.Release()
 
 	r.Clients.Range(func(key string, value *types.RestreamClient) bool {
 		client := value
 
+		chunk.Retain()
 		select {
 		case client.WriteChan <- chunk:
 			// Successful enqueue counts as progress; resets the slow-client clock.
@@ -1073,13 +1075,15 @@ func (r *Restream) DistributeToClients(data []byte) int {
 			// and enqueue the newest so it stays on the live edge. TS decoders resync
 			// after a gap, trading a momentary artifact for uninterrupted playback.
 			select {
-			case <-client.WriteChan: // shed oldest chunk
+			case old := <-client.WriteChan: // shed oldest chunk
+				old.Release()
 			default:
 			}
 			select {
 			case client.WriteChan <- chunk:
 				client.LastProgress.Store(time.Now().Unix())
 			default:
+				chunk.Release()
 			}
 			activeClients++ // keep the client; never drop on a full buffer alone
 		}
@@ -1454,7 +1458,17 @@ func (r *Restream) drainClient(client *types.RestreamClient) {
 		case <-client.Done:
 			// Client removed. WriteChan is intentionally never closed because
 			// DistributeToClients has multiple concurrent senders; Done is the
-			// sole termination signal. Any buffered chunks are dropped.
+			// sole termination signal. Queued chunks are released so their
+			// buffers return to the pool.
+			for {
+				select {
+				case chunk := <-client.WriteChan:
+					chunk.Release()
+					continue
+				default:
+				}
+				break
+			}
 			logger.Debug("{restream/restream - drainClient} Channel %s: Drain goroutine exiting for client %s",
 				r.Channel.Name, client.Id)
 			return
@@ -1466,13 +1480,14 @@ func (r *Restream) drainClient(client *types.RestreamClient) {
 					}
 				}()
 				rc.SetWriteDeadline(time.Now().Add(constants.Internal.ClientWriteDeadline))
-				_, err = client.Writer.Write(chunk)
+				_, err = client.Writer.Write(chunk.Data)
 				if err != nil {
 					return err
 				}
 				client.Flusher.Flush()
 				return nil
 			}()
+			chunk.Release()
 
 			if writeErr != nil {
 				logger.Debug("{restream/restream - drainClient} Channel %s: Write error for client %s, removing: %v",

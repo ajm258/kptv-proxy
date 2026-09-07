@@ -113,6 +113,24 @@ type CtxBundle struct {
 	Cancel context.CancelFunc
 }
 
+// StreamChunk is a refcounted, pooled copy of a chunk of stream data shared by
+// every client the chunk is distributed to. Each holder releases its reference
+// once it is done with Data; the buffer returns to the pool at zero.
+type StreamChunk struct {
+	Data []byte
+	refs atomic.Int32
+	pool *sync.Pool
+}
+
+// chunkPool recycles StreamChunk buffers across distribution cycles, removing
+// the per-read allocation that would otherwise scale with read rate and
+// active channel count.
+var chunkPool = sync.Pool{
+	New: func() any {
+		return &StreamChunk{}
+	},
+}
+
 // RestreamClient represents an individual client connection receiving streamed content
 // from a restreamer instance. Each client maintains its own connection state, activity
 // tracking, and completion signaling while sharing the same upstream data stream
@@ -127,7 +145,7 @@ type RestreamClient struct {
 	Flusher      http.Flusher        // HTTP flusher interface for real-time data streaming without buffering delays
 	Done         chan bool           // Completion signal channel for coordinated client disconnection and cleanup
 	LastSeen     atomic.Int64        // Atomic Unix timestamp of most recent client activity for inactivity detection
-	WriteChan    chan []byte         // Bounded outbound chunk queue; full = client too slow to keep up
+	WriteChan    chan *StreamChunk   // Bounded outbound chunk queue; full = client too slow to keep up
 	LastProgress atomic.Int64        // Unix timestamp of last successful WriteChan enqueue; full channel past grace from this = slow client
 }
 
@@ -181,6 +199,35 @@ const (
 	ContentTypeVOD     ContentType = "vod"    // Video on demand, single-asset movie content
 	ContentTypeSeries  ContentType = "series" // Episodic series content
 )
+
+// NewStreamChunk returns a pooled chunk holding a copy of data with a single
+// reference held by the caller.
+func NewStreamChunk(data []byte) *StreamChunk {
+	c := chunkPool.Get().(*StreamChunk)
+	if cap(c.Data) < len(data) {
+		c.Data = make([]byte, len(data))
+	}
+	c.Data = c.Data[:len(data)]
+	copy(c.Data, data)
+	c.pool = &chunkPool
+	c.refs.Store(1)
+	return c
+}
+
+// Retain adds a reference, taken before the chunk is handed to another holder.
+func (c *StreamChunk) Retain() {
+	c.refs.Add(1)
+}
+
+// Release drops a reference and returns the chunk to the pool once the last
+// holder is done. Releasing more times than retained is a bug that would hand
+// a live buffer to another stream, so the underflow is ignored rather than
+// double-pooled.
+func (c *StreamChunk) Release() {
+	if c.refs.Add(-1) == 0 {
+		c.pool.Put(c)
+	}
+}
 
 // Context returns the current streaming context, or a background context if
 // none has been set yet. Safe for concurrent use.
