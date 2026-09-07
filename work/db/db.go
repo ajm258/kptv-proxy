@@ -190,6 +190,13 @@ func initSchema(db *sql.DB) error {
 		permissions INTEGER NOT NULL DEFAULT 0
 	);
 
+	CREATE TABLE IF NOT EXISTS kp_sessions (
+		id_hash    TEXT    PRIMARY KEY,
+		user_id    INTEGER NOT NULL,
+		username   TEXT    NOT NULL,
+		name       TEXT    NOT NULL,
+		expires_at INTEGER NOT NULL
+	);
 
 	CREATE TABLE IF NOT EXISTS kp_channel_epg (
 		id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -294,6 +301,8 @@ func initSchema(db *sql.DB) error {
 	CREATE INDEX IF NOT EXISTS idx_users_username ON kp_users(username);
 	CREATE INDEX IF NOT EXISTS idx_users_email    ON kp_users(email);
 	CREATE INDEX IF NOT EXISTS idx_tokens_hash    ON kp_api_tokens(token_hash);
+	CREATE INDEX IF NOT EXISTS idx_sessions_user    ON kp_sessions(user_id);
+	CREATE INDEX IF NOT EXISTS idx_sessions_expires ON kp_sessions(expires_at);
 	CREATE INDEX IF NOT EXISTS idx_stream_order_channel ON kp_stream_order(channel, s_order);
 	CREATE INDEX IF NOT EXISTS idx_local_sources_order ON kp_local_sources(sort_order);
 	CREATE INDEX IF NOT EXISTS idx_local_media_source  ON kp_local_media(local_source_id, sort_key);

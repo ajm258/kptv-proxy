@@ -1,9 +1,13 @@
 package users
 
 import (
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"kptv-proxy/work/constants"
-	"sync"
+	"kptv-proxy/work/db"
+	"kptv-proxy/work/logger"
 	"time"
 )
 
@@ -15,18 +19,17 @@ type Session struct {
 	ExpiresAt time.Time
 }
 
-// sessionStore is the in-memory session store.
-type sessionStore struct {
-	mu       sync.RWMutex
-	sessions map[string]*Session
-}
-
-var store = &sessionStore{
-	sessions: make(map[string]*Session),
-}
-
 func init() {
-	go store.cleanup()
+	go sessionCleanup()
+}
+
+// hashSessionID returns the hex-encoded SHA-256 of a raw session ID. IDs are 64
+// characters of crypto/rand output, so a KDF is unnecessary and a fast hash
+// allows an indexed single-row lookup. Only the hash is stored, so a database
+// copy cannot be replayed as a live session.
+func hashSessionID(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
 }
 
 // CreateSession generates a new session for a user and returns the session ID.
@@ -41,67 +44,68 @@ func CreateSession(userID int64, username, name string, rememberMe bool) (string
 		ttl = constants.Internal.SessionTTLExtended
 	}
 
-	store.mu.Lock()
-	store.sessions[id] = &Session{
-		UserID:    userID,
-		Username:  username,
-		Name:      name,
-		ExpiresAt: time.Now().Add(ttl),
+	_, err = db.Get().Exec(`
+		INSERT INTO kp_sessions (id_hash, user_id, username, name, expires_at)
+		VALUES (?, ?, ?, ?, ?)`,
+		hashSessionID(id), userID, username, name, time.Now().Add(ttl).Unix(),
+	)
+	if err != nil {
+		logger.Error("{users/session - CreateSession} %v", err)
+		return "", err
 	}
-	store.mu.Unlock()
 
 	return id, nil
 }
 
 // GetSession retrieves a session by ID, returning nil if not found or expired.
-// An expired entry is evicted on read rather than waiting for the cleanup tick.
+// An expired row is deleted on read rather than waiting for the cleanup tick.
 func GetSession(id string) *Session {
-	store.mu.RLock()
-	s, ok := store.sessions[id]
-	store.mu.RUnlock()
+	var (
+		s         Session
+		expiresAt int64
+	)
 
-	if !ok {
+	err := db.GetReader().QueryRow(`
+		SELECT user_id, username, name, expires_at
+		FROM kp_sessions WHERE id_hash = ?`, hashSessionID(id),
+	).Scan(&s.UserID, &s.Username, &s.Name, &expiresAt)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			logger.Error("{users/session - GetSession} %v", err)
+		}
 		return nil
 	}
 
+	s.ExpiresAt = time.Unix(expiresAt, 0)
 	if time.Now().After(s.ExpiresAt) {
 		DeleteSession(id)
 		return nil
 	}
-	return s
+	return &s
 }
 
 // DeleteSession removes a session by ID.
 func DeleteSession(id string) {
-	store.mu.Lock()
-	delete(store.sessions, id)
-	store.mu.Unlock()
+	if _, err := db.Get().Exec(`DELETE FROM kp_sessions WHERE id_hash = ?`, hashSessionID(id)); err != nil {
+		logger.Error("{users/session - DeleteSession} %v", err)
+	}
 }
 
 // DeleteSessionsForUser revokes every outstanding session belonging to a user.
 func DeleteSessionsForUser(userID int64) {
-	store.mu.Lock()
-	for id, s := range store.sessions {
-		if s.UserID == userID {
-			delete(store.sessions, id)
-		}
+	if _, err := db.Get().Exec(`DELETE FROM kp_sessions WHERE user_id = ?`, userID); err != nil {
+		logger.Error("{users/session - DeleteSessionsForUser} id=%d: %v", userID, err)
 	}
-	store.mu.Unlock()
 }
 
-// cleanup periodically removes expired sessions.
-func (s *sessionStore) cleanup() {
+// sessionCleanup periodically removes expired sessions.
+func sessionCleanup() {
 	ticker := time.NewTicker(constants.Internal.SessionCleanupTick)
 	defer ticker.Stop()
 	for range ticker.C {
-		now := time.Now()
-		s.mu.Lock()
-		for id, session := range s.sessions {
-			if now.After(session.ExpiresAt) {
-				delete(s.sessions, id)
-			}
+		if _, err := db.Get().Exec(`DELETE FROM kp_sessions WHERE expires_at <= ?`, time.Now().Unix()); err != nil {
+			logger.Error("{users/session - sessionCleanup} %v", err)
 		}
-		s.mu.Unlock()
 	}
 }
 
