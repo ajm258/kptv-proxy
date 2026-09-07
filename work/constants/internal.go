@@ -463,7 +463,7 @@ var Internal = InternalConstants{
 	PasswordMinLength:       12,
 	LoginMaxAttempts:        10,
 	LoginWindow:             15 * time.Minute,
-	Argon2Memory:            64 * 1024, // 64KB
+	Argon2Memory:            64 * 1024, // 64MB (argon2 parameter is in KiB)
 	Argon2Iterations:        3,
 	Argon2Parallelism:       2,
 	Argon2SaltLength:        16,
