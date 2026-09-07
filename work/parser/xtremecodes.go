@@ -548,7 +548,7 @@ func takeRateLimit(ctx context.Context, rateLimiter ratelimit.Limiter) error {
 
 	select {
 	case <-taken:
-		return ctx.Err()
+		return nil
 	case <-ctx.Done():
 		return ctx.Err()
 	}
