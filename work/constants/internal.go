@@ -50,6 +50,11 @@ type InternalConstants struct {
 	RemoteFileRetries       int           // Extra attempts against the same provider before moving to the next
 
 	// -------------------------------------------------------------------------
+	// work/handlers/xcoutput.go — HandleXCPlayerAPI()
+	// -------------------------------------------------------------------------
+	XCShortEPGMaxLimit int // Upper bound on the client-supplied get_short_epg limit
+
+	// -------------------------------------------------------------------------
 	// work/restream/restream.go — streamFallbackVideo() / streamLocalFallback()
 	// -------------------------------------------------------------------------
 	OversizedBufferMultiplier    int           // Multiplier used to detect and discard oversized buffers in the pool
@@ -347,6 +352,11 @@ var Internal = InternalConstants{
 	// -------------------------------------------------------------------------
 	RemoteFileHeaderTimeout: 8 * time.Second,
 	RemoteFileRetries:       1,
+
+	// -------------------------------------------------------------------------
+	// XC player API
+	// -------------------------------------------------------------------------
+	XCShortEPGMaxLimit: 50,
 
 	// -------------------------------------------------------------------------
 	// Fallback video

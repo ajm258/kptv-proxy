@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"kptv-proxy/work/config"
+	"kptv-proxy/work/constants"
 	"kptv-proxy/work/db"
 	"kptv-proxy/work/deadstreams"
 	"kptv-proxy/work/epgindex"
@@ -657,7 +658,7 @@ func HandleXCPlayerAPI(sp *proxy.StreamProxy) http.HandlerFunc {
 		case "get_short_epg":
 			limit := 4
 			if l, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && l > 0 {
-				limit = l
+				limit = min(l, constants.Internal.XCShortEPGMaxLimit)
 			}
 			json.NewEncoder(w).Encode(buildXCEPGListings(sp, r.URL.Query().Get("stream_id"), limit, false))
 
