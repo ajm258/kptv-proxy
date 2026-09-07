@@ -1,4 +1,3 @@
-// work/admin/config.go
 package admin
 
 import (

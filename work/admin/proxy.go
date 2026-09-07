@@ -1,4 +1,3 @@
-// work/admin/proxy.go
 package admin
 
 import (
