@@ -98,7 +98,7 @@ func (r *Restream) streamWithFFmpeg(streamURL string) (bool, int64) {
 	// Create stderr pipe to capture FFmpeg errors/warnings
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		logger.Error("[FFMPEG] Failed to create stderr pipe for channel %s: %v", r.Channel.Name, err)
+		logger.Error("{restream/ffmpeg - streamWithFFmpeg} Failed to create stderr pipe for channel %s: %v", r.Channel.Name, err)
 		return false, 0
 	}
 

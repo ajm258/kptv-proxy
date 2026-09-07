@@ -36,7 +36,7 @@ func addLogEntry(level, message string) {
 	default:
 		logger.Info("%s", message)
 	}
-}
+}	
 
 // handleGetLogs retrieves the current log buffer for admin interface display.
 func handleGetLogs(w http.ResponseWriter, r *http.Request) {
