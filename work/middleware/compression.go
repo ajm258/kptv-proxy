@@ -22,26 +22,51 @@ var gzipWriterPool = sync.Pool{
 
 // gzipResponseWriter wraps an http.ResponseWriter with a gzip-compressing io.Writer,
 // intercepting Write calls to transparently compress response bodies before they are
-// sent to the client. It tracks header write state to ensure proper status code handling.
+// sent to the client. Compression is decided at WriteHeader time so bodyless and
+// redirect responses are passed through uncompressed.
 type gzipResponseWriter struct {
 	io.Writer                // Embedded gzip writer for compressed output
 	http.ResponseWriter      // Embedded original response writer for header access
 	wroteHeader         bool // Tracks whether WriteHeader has been called
+	compress            bool // Whether the response body is actually being gzipped
 }
 
-// WriteHeader records the HTTP status code on the underlying ResponseWriter and marks
-// the header as written to prevent duplicate header writes on subsequent Write calls.
+// bodyAllowsGzip reports whether a status code carries a body worth compressing.
+// Informational, no-content, not-modified and redirect responses either have no
+// body or a trivial one, and tagging them Content-Encoding: gzip produces a
+// response the client cannot parse.
+func bodyAllowsGzip(status int) bool {
+	if status < 200 || status == http.StatusNoContent || status == http.StatusNotModified {
+		return false
+	}
+	return status < 300 || status >= 400
+}
+
+// WriteHeader decides whether this response is compressible, sets the encoding
+// headers only when it is, records the HTTP status code on the underlying
+// ResponseWriter, and marks the header as written to prevent duplicate writes.
 func (w *gzipResponseWriter) WriteHeader(status int) {
 	w.wroteHeader = true
+	if bodyAllowsGzip(status) {
+		w.compress = true
+
+		// compressed size is unknown until the response is fully written
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Del("Content-Length")
+	}
 	w.ResponseWriter.WriteHeader(status)
 }
 
 // Write compresses and writes the byte slice to the underlying gzip writer. If no
 // explicit status code has been set via WriteHeader, it defaults to 200 OK before
 // writing the first chunk of response data to maintain proper HTTP semantics.
+// Uncompressible responses are written through to the original writer.
 func (w *gzipResponseWriter) Write(b []byte) (int, error) {
 	if !w.wroteHeader {
 		w.WriteHeader(http.StatusOK)
+	}
+	if !w.compress {
+		return w.ResponseWriter.Write(b)
 	}
 	return w.Writer.Write(b)
 }
@@ -51,7 +76,7 @@ func (w *gzipResponseWriter) Write(b []byte) (int, error) {
 // needs to be delivered incrementally rather than buffered until connection close.
 func (w *gzipResponseWriter) Flush() {
 	// flush the gzip writer's internal buffer first
-	if gzw, ok := w.Writer.(*gzip.Writer); ok {
+	if gzw, ok := w.Writer.(*gzip.Writer); ok && w.compress {
 		gzw.Flush()
 	}
 
@@ -72,32 +97,37 @@ func (w *gzipResponseWriter) Flush() {
 func GzipMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 
+		// a shared cache must not serve a gzipped body to a client that
+		// did not ask for one
+		w.Header().Add("Vary", "Accept-Encoding")
+
 		// pass through if the client doesn't accept gzip encoding
 		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 			next(w, r)
 			return
 		}
 
-		// set the appropriate encoding header and remove content-length
-		// since compressed size is unknown until the response is fully written
-		w.Header().Set("Content-Encoding", "gzip")
-		w.Header().Del("Content-Length")
-
 		// acquire a gzip writer from the pool and reset it for this response
 		gz := gzipWriterPool.Get().(*gzip.Writer)
 		gz.Reset(w)
-		defer func() {
-			if err := gz.Close(); err != nil {
-				logger.Error("{compression - GzipMiddleware} failed to close gzip writer for: %s %s - %v", r.Method, r.URL.Path, err)
-			}
-			gzipWriterPool.Put(gz)
-		}()
 
 		// wrap the response writer with our gzip-compressing writer
 		gzw := &gzipResponseWriter{
 			Writer:         gz,
 			ResponseWriter: w,
 		}
+
+		defer func() {
+			// nothing was compressed: point the writer at Discard so Close
+			// doesn't emit a stray gzip header onto an uncompressed response
+			if !gzw.compress {
+				gz.Reset(io.Discard)
+			}
+			if err := gz.Close(); err != nil {
+				logger.Error("{compression - GzipMiddleware} failed to close gzip writer for: %s %s - %v", r.Method, r.URL.Path, err)
+			}
+			gzipWriterPool.Put(gz)
+		}()
 
 		// hand off to the next handler with the compressed writer
 		next(gzw, r)
