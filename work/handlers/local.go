@@ -27,13 +27,19 @@ func HandleLocalStream(sp *proxy.StreamProxy) http.HandlerFunc {
 			return
 		}
 
+		release, ok := acquireXCConnection(w, account)
+		if !ok {
+			return
+		}
+		defer release()
+
 		hash := vars["hash"]
 		if dotIdx := strings.LastIndex(hash, "."); dotIdx != -1 {
 			hash = hash[:dotIdx]
 		}
 
-		entry, ok := resolveLocalEntry(hash)
-		if !ok {
+		entry, found := resolveLocalEntry(hash)
+		if !found {
 			http.Error(w, "Not found", http.StatusNotFound)
 			return
 		}
