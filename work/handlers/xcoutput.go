@@ -540,6 +540,36 @@ func buildCategoryList(sp *proxy.StreamProxy, contentType string) []xcCategory {
 	return categories
 }
 
+// writeCachedXCList serves a player_api list response from the XC data cache,
+// building and caching it on a miss. The key carries the import generation and
+// the account, since rendered stream URLs embed that account's credentials.
+func writeCachedXCList(sp *proxy.StreamProxy, w http.ResponseWriter, username, kind string, build func() any) {
+	if !sp.Config.CacheEnabled {
+		utils.WriteJSON(w, build())
+		return
+	}
+
+	key := fmt.Sprintf("xclist_%d_%s_%s", sp.ImportGeneration(), username, kind)
+	if cached, ok := sp.Cache.GetXCData(key); ok {
+		logger.Debug("{handlers/xcoutput - writeCachedXCList} Serving cached %s for account: %s", kind, username)
+		if _, err := w.Write([]byte(cached)); err != nil {
+			logger.Error("{handlers/xcoutput - writeCachedXCList} Failed to write cached %s: %v", kind, err)
+		}
+		return
+	}
+
+	payload, err := json.Marshal(build())
+	if err != nil {
+		logger.Error("{handlers/xcoutput - writeCachedXCList} Failed to encode %s: %v", kind, err)
+		return
+	}
+
+	sp.Cache.SetXCData(key, string(payload))
+	if _, err := w.Write(payload); err != nil {
+		logger.Error("{handlers/xcoutput - writeCachedXCList} Failed to write %s: %v", kind, err)
+	}
+}
+
 // HandleXCPlayerAPI handles /player_api.php requests from Xtream Codes compatible clients.
 func HandleXCPlayerAPI(sp *proxy.StreamProxy) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -576,28 +606,32 @@ func HandleXCPlayerAPI(sp *proxy.StreamProxy) http.HandlerFunc {
 				utils.WriteJSON(w, []xcCategory{})
 				return
 			}
-			utils.WriteJSON(w, buildCategoryList(sp, "live"))
+			writeCachedXCList(sp, w, username, "live_categories", func() any { return buildCategoryList(sp, "live") })
 
 		case "get_live_streams":
 			if !account.EnableLive {
 				utils.WriteJSON(w, []xcStream{})
 				return
 			}
-			utils.WriteJSON(w, buildStreamList(sp, "live", sp.Config.BaseURL, username, password))
+			writeCachedXCList(sp, w, username, "live_streams", func() any {
+				return buildStreamList(sp, "live", sp.Config.BaseURL, username, password)
+			})
 
 		case "get_vod_categories":
 			if !account.EnableVOD {
 				utils.WriteJSON(w, []xcCategory{})
 				return
 			}
-			utils.WriteJSON(w, buildCategoryList(sp, "vod"))
+			writeCachedXCList(sp, w, username, "vod_categories", func() any { return buildCategoryList(sp, "vod") })
 
 		case "get_vod_streams":
 			if !account.EnableVOD {
 				utils.WriteJSON(w, []xcStream{})
 				return
 			}
-			utils.WriteJSON(w, buildStreamList(sp, "vod", sp.Config.BaseURL, username, password))
+			writeCachedXCList(sp, w, username, "vod_streams", func() any {
+				return buildStreamList(sp, "vod", sp.Config.BaseURL, username, password)
+			})
 
 		case "get_vod_info":
 			if !account.EnableVOD {
@@ -623,14 +657,16 @@ func HandleXCPlayerAPI(sp *proxy.StreamProxy) http.HandlerFunc {
 				utils.WriteJSON(w, []xcCategory{})
 				return
 			}
-			utils.WriteJSON(w, buildCategoryList(sp, "series"))
+			writeCachedXCList(sp, w, username, "series_categories", func() any { return buildCategoryList(sp, "series") })
 
 		case "get_series":
 			if !account.EnableSeries {
 				utils.WriteJSON(w, []xcStream{})
 				return
 			}
-			utils.WriteJSON(w, buildStreamList(sp, "series", sp.Config.BaseURL, username, password))
+			writeCachedXCList(sp, w, username, "series", func() any {
+				return buildStreamList(sp, "series", sp.Config.BaseURL, username, password)
+			})
 
 		case "get_series_info":
 			if !account.EnableSeries {
