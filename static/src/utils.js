@@ -12,6 +12,22 @@ function escapeHtml(text) {
 }
 
 /**
+ * Escapes a value for safe interpolation into an HTML attribute value,
+ * covering the quote characters escapeHtml leaves alone.
+ * @param {*} text - Raw value to escape
+ * @returns {string} Attribute-safe string
+ */
+function escapeAttr(text) {
+    if (text === null || text === undefined) return '';
+    return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+/**
  * Obfuscates a URL for display, showing only protocol and hostname
  * while masking path and query string components.
  * @param {string} url - Full URL to obfuscate

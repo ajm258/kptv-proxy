@@ -36,8 +36,8 @@ function renderActiveChannels(channels) {
         <div class="channel-item">
             <div class="flex justify-between items-center">
                 <div class="flex items-center flex-1">
-                    <img src="${channel.logoURL || "https://cdn.kevp.us/tv/kptv-icon.png"}"
-                        alt="${escapeHtml(channel.name)}"
+                    <img src="${escapeAttr(channel.logoURL || "https://cdn.kevp.us/tv/kptv-icon.png")}"
+                        alt="${escapeAttr(channel.name)}"
                         class="w-12 h-12 object-cover rounded mr-3"
                         onerror="this.src='https://cdn.kevp.us/tv/kptv-icon.png'">
                     <div class="flex-1">
@@ -60,7 +60,7 @@ function renderActiveChannels(channels) {
                     <div class="text-gray-400">Source: ${channel.currentSource || "Unknown"}</div>
                     <div class="flex gap-2 mt-2">
                         <button class="px-3 py-1 bg-kptv-gray-light border border-kptv-border hover:bg-kptv-border rounded text-xs transition-colors flex items-center space-x-1"
-                            onclick="showStreamSelector('${escapeHtml(channel.name).replace(/'/g, "\\'")}')">
+                            data-action="streams" data-channel="${escapeAttr(channel.name)}">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
@@ -68,8 +68,8 @@ function renderActiveChannels(channels) {
                             <span>Streams</span>
                         </button>
                         <button class="px-3 py-1 bg-kptv-gray-light border border-kptv-border hover:bg-kptv-border rounded text-xs transition-colors flex items-center space-x-1"
-                            onclick="showEPGChannelModal(this.dataset.channel)" data-channel="${channel.name.replace(/"/g, "&quot;")}">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            data-action="epg" data-channel="${escapeAttr(channel.name)}">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
                             </svg>
                             <span>EPG</span>
@@ -81,6 +81,13 @@ function renderActiveChannels(channels) {
         `;
     })
     .join("");
+
+  container.onclick = function (e) {
+    const btn = e.target.closest("button[data-action]");
+    if (!btn || !container.contains(btn)) return;
+    if (btn.dataset.action === "streams") showStreamSelector(btn.dataset.channel);
+    else if (btn.dataset.action === "epg") showEPGChannelModal(btn.dataset.channel);
+  };
 
   channels.forEach((channel) => loadChannelStats(channel.name));
 }
@@ -201,26 +208,25 @@ function renderAllChannels(channels) {
                             ${hasEPGMapping(channel.name) ? `<span class="inline-block w-2 h-2 rounded-full bg-green-500 ml-1" title="EPG Mapped"></span>` : ""}
                         </div>
                         <div class="text-sm text-gray-400">
-                            Group: ${channel.group || "Uncategorized"} |
+                            Group: ${escapeHtml(channel.group || "Uncategorized")} |
                             Sources: ${channel.sources || 0} |
                             Status: ${channel.active ? `Active (${channel.clients} clients)` : "Inactive"}
                         </div>
-                        ${
-                          channel.active
-                            ? `
+                        ${channel.active
+        ? `
                         <div class="mt-2 flex flex-wrap gap-1" id="stats-all-${safeId}">
                             <span class="text-xs text-gray-400">Loading stats...</span>
                         </div>
                         `
-                            : ""
-                        }
+        : ""
+      }
                     </div>
                 </div>
                 <div class="flex items-center ml-4">
                     <span class="status-indicator ${channel.active ? "status-active" : "status-error"}"></span>
                     <div class="flex gap-2 mt-2">
                         <button class="px-3 py-1 bg-kptv-gray-light border border-kptv-border hover:bg-kptv-border rounded text-xs transition-colors flex items-center space-x-1"
-                            onclick="showStreamSelector('${escapeHtml(channel.name).replace(/'/g, "\\'")}')">
+                            data-action="streams" data-channel="${escapeAttr(channel.name)}">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
@@ -228,7 +234,7 @@ function renderAllChannels(channels) {
                             <span>Streams</span>
                         </button>
                         <button class="px-3 py-1 bg-kptv-gray-light border border-kptv-border hover:bg-kptv-border rounded text-xs transition-colors flex items-center space-x-1"
-                            onclick="showEPGChannelModal(this.dataset.channel)" data-channel="${channel.name.replace(/"/g, "&quot;")}">
+                            data-action="epg" data-channel="${escapeAttr(channel.name)}">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
                             </svg>
@@ -243,6 +249,13 @@ function renderAllChannels(channels) {
 
   container.innerHTML = "";
   container.appendChild(fragment);
+
+  container.onclick = function (e) {
+    const btn = e.target.closest("button[data-action]");
+    if (!btn || !container.contains(btn)) return;
+    if (btn.dataset.action === "streams") showStreamSelector(btn.dataset.channel);
+    else if (btn.dataset.action === "epg") showEPGChannelModal(btn.dataset.channel);
+  };
 
   channels.forEach((channel) => {
     if (channel.active) loadChannelStatsForAllTab(channel.name);
@@ -478,7 +491,7 @@ function renderGroupFilterButtons() {
     .map(
       (g) => `
         <button class="group-filter-btn px-3 py-1 rounded text-xs border transition-colors ${activeGroupFilter === g ? "bg-kptv-blue border-kptv-blue text-white" : "bg-kptv-gray-light border-kptv-border hover:border-kptv-blue"}"
-            data-group="${g.replace(/"/g, "&quot;")}">${escapeHtml(g)}</button>
+            data-group="${escapeAttr(g)}">${escapeHtml(g)}</button>
     `,
     )
     .join("");
