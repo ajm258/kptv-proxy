@@ -72,7 +72,7 @@ function renderStreamCards(data) {
         return `
             <div class="stream-card ${cardClass} ${isDead ? 'dead-stream' : ''} border border-kptv-border rounded p-3 mb-2 cursor-grab active:cursor-grabbing"
                 data-original-index="${originalIndex}"
-                data-hash="${stream.hash}"
+                data-hash="${escapeAttr(stream.hash)}"
                 style="touch-action: none;">
                 <div class="flex justify-between items-center">
                     <div class="flex items-center flex-1">
@@ -95,36 +95,36 @@ function renderStreamCards(data) {
                                 <div class="text-sm">Group: ${escapeHtml(stream.attributes['group-title'])}</div>
                             ` : ''}
                             <div class="text-sm text-gray-400">
-                                Source: ${stream.sourceName} (Order: ${stream.sourceOrder})
+                                Source: ${escapeHtml(stream.sourceName)} (Order: ${escapeHtml(stream.sourceOrder)})
                             </div>
                         </div>
                     </div>
                     <div class="flex items-center gap-2 ml-4">
                         ${isDead
-                            ? `<a href="#" class="text-green-500 hover:text-green-400" title="Make Live (${reasonText})"
-                                onclick="reviveStream('${escapeHtml(data.channelName)}', ${originalIndex}); return false;">
+                ? `<a href="#" class="text-green-500 hover:text-green-400" title="Make Live (${reasonText})"
+                                data-action="revive" data-index="${originalIndex}">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
                                 </svg>
                               </a>`
-                            : `<a href="#" class="text-kptv-blue hover:text-kptv-blue-light" title="Activate Stream"
-                                onclick="selectStream('${escapeHtml(data.channelName)}', ${originalIndex}); return false;">
+                : `<a href="#" class="text-kptv-blue hover:text-kptv-blue-light" title="Activate Stream"
+                                data-action="select" data-index="${originalIndex}">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path>
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                                 </svg>
                               </a>
                               <a href="#" class="text-red-500 hover:text-red-400" title="Mark as Dead"
-                                onclick="killStream('${escapeHtml(data.channelName)}', ${originalIndex}); return false;">
+                                data-action="kill" data-index="${originalIndex}">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"></path>
                                 </svg>
                               </a>`
-                        }
+            }
                         <a href="#"
                             class="${data.obfuscated ? 'text-gray-600 cursor-not-allowed' : 'text-gray-400 hover:text-white'}"
                             title="${data.obfuscated ? 'URL obfuscated - cannot copy' : 'Copy stream URL'}"
-                            onclick="${data.obfuscated ? 'return false;' : `copyToClipboard('${stream.url}', 'Stream URL copied'); return false;`}">
+                            ${data.obfuscated ? '' : `data-action="copy" data-url="${escapeAttr(stream.url)}"`}>
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
                             </svg>
@@ -256,6 +256,27 @@ function initStreamDragDrop() {
 
     container.addEventListener('pointerup', finish);
     container.addEventListener('pointercancel', finish);
+
+    container.addEventListener('click', (e) => {
+        const link = e.target.closest('a[data-action]');
+        if (!link || !container.contains(link)) return;
+        e.preventDefault();
+        const index = parseInt(link.dataset.index, 10);
+        switch (link.dataset.action) {
+            case 'revive':
+                reviveStream(currentChannelName, index);
+                break;
+            case 'select':
+                selectStream(currentChannelName, index);
+                break;
+            case 'kill':
+                killStream(currentChannelName, index);
+                break;
+            case 'copy':
+                copyToClipboard(link.dataset.url, 'Stream URL copied');
+                break;
+        }
+    });
 }
 
 /**
