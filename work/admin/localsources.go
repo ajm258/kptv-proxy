@@ -6,6 +6,7 @@ import (
 	"kptv-proxy/work/db"
 	"kptv-proxy/work/localscan"
 	"kptv-proxy/work/proxy"
+	"kptv-proxy/work/utils"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -59,7 +60,7 @@ func handleGetLocalSources(_ *proxy.StreamProxy) http.HandlerFunc {
 			out[i] = toLocalSourceOut(s)
 		}
 
-		json.NewEncoder(w).Encode(out)
+		utils.WriteJSON(w, out)
 	}
 }
 
@@ -84,7 +85,7 @@ func handleCreateLocalSource(_ *proxy.StreamProxy) http.HandlerFunc {
 		addLogEntry("info", fmt.Sprintf("Local source created: %s", incoming.Name))
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]any{"status": "success", "id": id})
+		utils.WriteJSON(w, map[string]any{"status": "success", "id": id})
 	}
 }
 
@@ -129,7 +130,7 @@ func handleUpdateLocalSource(_ *proxy.StreamProxy) http.HandlerFunc {
 		addLogEntry("info", fmt.Sprintf("Local source updated: %s", incoming.Name))
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]any{"status": "success"})
+		utils.WriteJSON(w, map[string]any{"status": "success"})
 	}
 }
 
@@ -153,7 +154,7 @@ func handleDeleteLocalSource(_ *proxy.StreamProxy) http.HandlerFunc {
 		addLogEntry("info", fmt.Sprintf("Local source deleted: %d", id))
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]any{"status": "success"})
+		utils.WriteJSON(w, map[string]any{"status": "success"})
 	}
 }
 
@@ -178,7 +179,7 @@ func handleScanLocalSource(_ *proxy.StreamProxy) http.HandlerFunc {
 		addLogEntry("info", fmt.Sprintf("Local scan complete for source %d: %d entries", id, count))
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]any{"status": "success", "count": count})
+		utils.WriteJSON(w, map[string]any{"status": "success", "count": count})
 	}
 }
 
@@ -197,7 +198,7 @@ func handleScanAllLocalSources(_ *proxy.StreamProxy) http.HandlerFunc {
 		addLogEntry("info", fmt.Sprintf("Local scan-all complete: %d entries", count))
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]any{"status": "success", "count": count})
+		utils.WriteJSON(w, map[string]any{"status": "success", "count": count})
 	}
 }
 
@@ -266,7 +267,7 @@ func handleGetLocalMedia(_ *proxy.StreamProxy) http.HandlerFunc {
 			end = total
 		}
 
-		json.NewEncoder(w).Encode(map[string]any{
+		utils.WriteJSON(w, map[string]any{
 			"total":   total,
 			"page":    page,
 			"size":    size,
@@ -286,7 +287,7 @@ func handleGetLocalMediaEntry(_ *proxy.StreamProxy) http.HandlerFunc {
 			return
 		}
 
-		json.NewEncoder(w).Encode(entry)
+		utils.WriteJSON(w, entry)
 	}
 }
 
@@ -328,7 +329,7 @@ func handleUpdateLocalMedia(_ *proxy.StreamProxy) http.HandlerFunc {
 
 		addLogEntry("info", fmt.Sprintf("Metadata updated: %s", existing.Display))
 
-		json.NewEncoder(w).Encode(updated)
+		utils.WriteJSON(w, updated)
 	}
 }
 

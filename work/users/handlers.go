@@ -3,6 +3,7 @@ package users
 import (
 	"encoding/json"
 	"kptv-proxy/work/constants"
+	"kptv-proxy/work/utils"
 	"net/http"
 	"strconv"
 	"strings"
@@ -285,7 +286,7 @@ func HandleChangePassword(w http.ResponseWriter, r *http.Request) {
 
 	if len(req.NewPassword) < 8 {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Password must be at least 8 characters"})
+		utils.WriteJSON(w, map[string]string{"error": "Password must be at least 8 characters"})
 		return
 	}
 
@@ -298,7 +299,7 @@ func HandleChangePassword(w http.ResponseWriter, r *http.Request) {
 	match, err := VerifyPassword(req.CurrentPassword, user.PasswordHash)
 	if err != nil || !match {
 		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Current password is incorrect"})
+		utils.WriteJSON(w, map[string]string{"error": "Current password is incorrect"})
 		return
 	}
 
@@ -339,7 +340,7 @@ func HandleChangePassword(w http.ResponseWriter, r *http.Request) {
 		MaxAge:   maxAge,
 	})
 
-	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+	utils.WriteJSON(w, map[string]string{"status": "success"})
 }
 
 // HandleGetTokens returns all API tokens (hashes excluded).
@@ -369,7 +370,7 @@ func HandleGetTokens(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	json.NewEncoder(w).Encode(safe)
+	utils.WriteJSON(w, safe)
 }
 
 // HandleCreateToken generates a new API token and returns the raw value once.
@@ -388,7 +389,7 @@ func HandleCreateToken(w http.ResponseWriter, r *http.Request) {
 
 	if req.Name == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(w).Encode(map[string]string{"error": "Name is required"})
+		utils.WriteJSON(w, map[string]string{"error": "Name is required"})
 		return
 	}
 
@@ -405,7 +406,7 @@ func HandleCreateToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Return the raw token exactly once — it cannot be retrieved again
-	json.NewEncoder(w).Encode(map[string]any{
+	utils.WriteJSON(w, map[string]any{
 		"id":    id,
 		"name":  req.Name,
 		"token": rawToken,
@@ -430,7 +431,7 @@ func HandleDeleteToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+	utils.WriteJSON(w, map[string]string{"status": "success"})
 }
 
 // HandleMe returns basic info about the current authenticated session.
@@ -449,7 +450,7 @@ func HandleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	json.NewEncoder(w).Encode(map[string]any{
+	utils.WriteJSON(w, map[string]any{
 		"username": session.Username,
 		"name":     session.Name,
 	})
@@ -458,7 +459,7 @@ func HandleMe(w http.ResponseWriter, r *http.Request) {
 // HandleGetPermissions returns the permission constants for the frontend.
 func HandleGetPermissions(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]int{
+	utils.WriteJSON(w, map[string]int{
 		"read":        PermRead,
 		"configWrite": PermConfigWrite,
 		"restart":     PermRestart,

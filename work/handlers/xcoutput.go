@@ -553,7 +553,7 @@ func HandleXCPlayerAPI(sp *proxy.StreamProxy) http.HandlerFunc {
 		if account == nil {
 			logger.Debug("{handlers/xcoutput - HandleXCPlayerAPI} Invalid credentials for username: %s", username)
 			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]any{
+			utils.WriteJSON(w, map[string]any{
 				"user_info": xcUserInfo{Auth: 0, Message: "Invalid credentials"},
 			})
 			return
@@ -573,84 +573,84 @@ func HandleXCPlayerAPI(sp *proxy.StreamProxy) http.HandlerFunc {
 		switch action {
 		case "get_live_categories":
 			if !account.EnableLive {
-				json.NewEncoder(w).Encode([]xcCategory{})
+				utils.WriteJSON(w, []xcCategory{})
 				return
 			}
-			json.NewEncoder(w).Encode(buildCategoryList(sp, "live"))
+			utils.WriteJSON(w, buildCategoryList(sp, "live"))
 
 		case "get_live_streams":
 			if !account.EnableLive {
-				json.NewEncoder(w).Encode([]xcStream{})
+				utils.WriteJSON(w, []xcStream{})
 				return
 			}
-			json.NewEncoder(w).Encode(buildStreamList(sp, "live", sp.Config.BaseURL, username, password))
+			utils.WriteJSON(w, buildStreamList(sp, "live", sp.Config.BaseURL, username, password))
 
 		case "get_vod_categories":
 			if !account.EnableVOD {
-				json.NewEncoder(w).Encode([]xcCategory{})
+				utils.WriteJSON(w, []xcCategory{})
 				return
 			}
-			json.NewEncoder(w).Encode(buildCategoryList(sp, "vod"))
+			utils.WriteJSON(w, buildCategoryList(sp, "vod"))
 
 		case "get_vod_streams":
 			if !account.EnableVOD {
-				json.NewEncoder(w).Encode([]xcStream{})
+				utils.WriteJSON(w, []xcStream{})
 				return
 			}
-			json.NewEncoder(w).Encode(buildStreamList(sp, "vod", sp.Config.BaseURL, username, password))
+			utils.WriteJSON(w, buildStreamList(sp, "vod", sp.Config.BaseURL, username, password))
 
 		case "get_vod_info":
 			if !account.EnableVOD {
-				json.NewEncoder(w).Encode(map[string]any{})
+				utils.WriteJSON(w, map[string]any{})
 				return
 			}
 			vodID, err := strconv.Atoi(r.URL.Query().Get("vod_id"))
 			if err != nil {
-				json.NewEncoder(w).Encode(map[string]any{})
+				utils.WriteJSON(w, map[string]any{})
 				return
 			}
 			if entry := localscan.FindByXCStreamID(vodID); entry != nil {
-				json.NewEncoder(w).Encode(buildLocalVODInfo(entry, sp.Config.BaseURL, username, password))
+				utils.WriteJSON(w, buildLocalVODInfo(entry, sp.Config.BaseURL, username, password))
 				return
 			}
-			json.NewEncoder(w).Encode(map[string]any{
+			utils.WriteJSON(w, map[string]any{
 				"user_info":   userInfo,
 				"server_info": serverInfo,
 			})
 
 		case "get_series_categories":
 			if !account.EnableSeries {
-				json.NewEncoder(w).Encode([]xcCategory{})
+				utils.WriteJSON(w, []xcCategory{})
 				return
 			}
-			json.NewEncoder(w).Encode(buildCategoryList(sp, "series"))
+			utils.WriteJSON(w, buildCategoryList(sp, "series"))
 
 		case "get_series":
 			if !account.EnableSeries {
-				json.NewEncoder(w).Encode([]xcStream{})
+				utils.WriteJSON(w, []xcStream{})
 				return
 			}
-			json.NewEncoder(w).Encode(buildStreamList(sp, "series", sp.Config.BaseURL, username, password))
+			utils.WriteJSON(w, buildStreamList(sp, "series", sp.Config.BaseURL, username, password))
 
 		case "get_series_info":
 			if !account.EnableSeries {
-				json.NewEncoder(w).Encode(map[string]any{})
+				utils.WriteJSON(w, map[string]any{})
 				return
 			}
 			seriesID, err := strconv.Atoi(r.URL.Query().Get("series_id"))
 			if err != nil {
-				json.NewEncoder(w).Encode(map[string]any{})
+				utils.WriteJSON(w, map[string]any{})
 				return
 			}
 			if entry := localscan.FindByXCStreamID(seriesID); entry != nil && entry.MediaType == "shows" {
-				json.NewEncoder(w).Encode(buildLocalSeriesInfo(entry, sp.Config.BaseURL, username, password))
+				utils.WriteJSON(w, buildLocalSeriesInfo(entry, sp.Config.BaseURL, username, password))
 				return
 			}
 			if payload, ok := buildRemoteSeriesInfo(sp, seriesID, sp.Config.BaseURL, username, password); ok {
-				json.NewEncoder(w).Encode(payload)
+				utils.WriteJSON(w, payload)
 				return
 			}
-			json.NewEncoder(w).Encode(map[string]any{
+			utils.WriteJSON(w, map[string]any{
 				"user_info":   userInfo,
 				"server_info": serverInfo,
 			})
@@ -660,13 +660,13 @@ func HandleXCPlayerAPI(sp *proxy.StreamProxy) http.HandlerFunc {
 			if l, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && l > 0 {
 				limit = min(l, constants.Internal.XCShortEPGMaxLimit)
 			}
-			json.NewEncoder(w).Encode(buildXCEPGListings(sp, r.URL.Query().Get("stream_id"), limit, false))
+			utils.WriteJSON(w, buildXCEPGListings(sp, r.URL.Query().Get("stream_id"), limit, false))
 
 		case "get_simple_data_table":
-			json.NewEncoder(w).Encode(buildXCEPGListings(sp, r.URL.Query().Get("stream_id"), 0, true))
+			utils.WriteJSON(w, buildXCEPGListings(sp, r.URL.Query().Get("stream_id"), 0, true))
 
 		default:
-			json.NewEncoder(w).Encode(map[string]any{
+			utils.WriteJSON(w, map[string]any{
 				"user_info":   userInfo,
 				"server_info": serverInfo,
 			})

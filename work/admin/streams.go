@@ -9,6 +9,7 @@ import (
 	"kptv-proxy/work/proxy"
 	"kptv-proxy/work/restream"
 	"kptv-proxy/work/types"
+	"kptv-proxy/work/utils"
 	"net/http"
 	"net/url"
 	"sync/atomic"
@@ -70,7 +71,7 @@ func handleSetChannelOrder(sp *proxy.StreamProxy) http.HandlerFunc {
 		applyChannelOrder(sp, channel, channelName)
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]any{
+		utils.WriteJSON(w, map[string]any{
 			"status":  "success",
 			"message": "Stream order updated and applied immediately",
 		})
@@ -106,7 +107,7 @@ func handleResetChannelOrder(sp *proxy.StreamProxy) http.HandlerFunc {
 		applyChannelOrder(sp, channel, channelName)
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]any{
+		utils.WriteJSON(w, map[string]any{
 			"status":  "success",
 			"message": "Stream order reset to default",
 		})
@@ -182,7 +183,7 @@ func handleKillStream(sp *proxy.StreamProxy) http.HandlerFunc {
 		addLogEntry("info", fmt.Sprintf("Stream %d manually marked as dead for channel %s", request.StreamIndex, channelName))
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]any{
+		utils.WriteJSON(w, map[string]any{
 			"status":  "success",
 			"message": fmt.Sprintf("Stream %d marked as dead", request.StreamIndex),
 		})
@@ -236,7 +237,7 @@ func handleReviveStream(sp *proxy.StreamProxy) http.HandlerFunc {
 		addLogEntry("info", fmt.Sprintf("Stream %d revived for channel %s", request.StreamIndex, channelName))
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]any{
+		utils.WriteJSON(w, map[string]any{
 			"status":  "success",
 			"message": fmt.Sprintf("Stream %d revived", request.StreamIndex),
 		})

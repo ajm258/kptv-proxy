@@ -1,7 +1,7 @@
 package users
 
 import (
-	"encoding/json"
+	"kptv-proxy/work/utils"
 	"net"
 	"net/http"
 	"strings"
@@ -23,7 +23,7 @@ func RequireAuth(next http.HandlerFunc) http.HandlerFunc {
 		if isAPIRequest(r) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]string{
+			utils.WriteJSON(w, map[string]string{
 				"error": "unauthorized",
 			})
 			return
@@ -58,7 +58,7 @@ func RequireAuthWithPerm(perm int, next http.HandlerFunc) http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]string{
+		utils.WriteJSON(w, map[string]string{
 			"error": "unauthorized",
 		})
 	}

@@ -7,6 +7,7 @@ import (
 	"kptv-proxy/work/config"
 	"kptv-proxy/work/constants"
 	"kptv-proxy/work/proxy"
+	"kptv-proxy/work/utils"
 	"net/http"
 )
 
@@ -194,6 +195,6 @@ func handleSetConfig(sp *proxy.StreamProxy) http.HandlerFunc {
 		addLogEntry("info", "Configuration updated via admin interface")
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+		utils.WriteJSON(w, map[string]string{"status": "success"})
 	}
 }

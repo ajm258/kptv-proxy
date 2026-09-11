@@ -124,7 +124,7 @@ func handleHDHRDiscover(sp *proxy.StreamProxy) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		json.NewEncoder(w).Encode(hdhrDiscoverResponse{
+		utils.WriteJSON(w, hdhrDiscoverResponse{
 			FriendlyName:    hdhrDeviceName,
 			Manufacturer:    hdhrManufacturer,
 			ModelNumber:     hdhrModelNumber,
@@ -183,7 +183,7 @@ func handleHDHRDeviceXML(sp *proxy.StreamProxy) http.HandlerFunc {
 func handleHDHRLineupStatus() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(hdhrLineupStatus{
+		utils.WriteJSON(w, hdhrLineupStatus{
 			ScanInProgress: 0,
 			ScanPossible:   1,
 			Source:         "Cable",
@@ -222,7 +222,7 @@ func handleHDHRLineup(sp *proxy.StreamProxy) http.HandlerFunc {
 			})
 		}
 
-		json.NewEncoder(w).Encode(lineup)
+		utils.WriteJSON(w, lineup)
 		logger.Debug("{handlers/hdhr - handleHDHRLineup} served %d channels to %s", len(lineup), r.RemoteAddr)
 	}
 }

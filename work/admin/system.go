@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"kptv-proxy/work/constants"
 	"kptv-proxy/work/proxy"
+	"kptv-proxy/work/utils"
 	"net/http"
 	"time"
 )
@@ -29,7 +30,7 @@ func handleRestart(w http.ResponseWriter, r *http.Request) {
 	addLogEntry("info", "Restart requested via admin interface - triggering graceful restart")
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{
+	utils.WriteJSON(w, map[string]string{
 		"status":  "restart_initiated",
 		"message": "Restarting KPTV Proxy process...",
 	})
@@ -73,7 +74,7 @@ func handleToggleWatcher(sp *proxy.StreamProxy) http.HandlerFunc {
 			addLogEntry("info", "Stream watcher disabled via admin interface")
 		}
 
-		json.NewEncoder(w).Encode(map[string]any{
+		utils.WriteJSON(w, map[string]any{
 			"status":         "success",
 			"watcherEnabled": request.Enabled,
 		})

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"kptv-proxy/work/constants"
 	"kptv-proxy/work/logger"
+	"kptv-proxy/work/utils"
 	"net/http"
 )
 
@@ -56,7 +57,7 @@ func handleClearLogs(w http.ResponseWriter, r *http.Request) {
 	logger.Info("Log entries cleared")
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+	utils.WriteJSON(w, map[string]string{"status": "success"})
 }
 
 // AdminLog provides direct admin log entry creation for admin-specific events.

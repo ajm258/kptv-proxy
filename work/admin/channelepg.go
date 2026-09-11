@@ -6,6 +6,7 @@ import (
 	"kptv-proxy/work/db"
 	"kptv-proxy/work/epgindex"
 	"kptv-proxy/work/proxy"
+	"kptv-proxy/work/utils"
 	"net/http"
 	"net/url"
 
@@ -26,11 +27,11 @@ func handleGetChannelEPG(_ *proxy.StreamProxy) http.HandlerFunc {
 
 		mapping, ok := db.GetChannelEPG(channelName)
 		if !ok {
-			json.NewEncoder(w).Encode(map[string]string{"epg_id": "", "epg_name": ""})
+			utils.WriteJSON(w, map[string]string{"epg_id": "", "epg_name": ""})
 			return
 		}
 
-		json.NewEncoder(w).Encode(map[string]string{
+		utils.WriteJSON(w, map[string]string{
 			"epg_id":   mapping.EPGID,
 			"epg_name": mapping.EPGName,
 			"now":      epgindex.NowTitle(mapping.EPGID),
@@ -65,7 +66,7 @@ func handleSetChannelEPG(_ *proxy.StreamProxy) http.HandlerFunc {
 		}
 
 		addLogEntry("info", fmt.Sprintf("EPG mapping set for channel %s: %s (%s)", channelName, req.EPGName, req.EPGID))
-		json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+		utils.WriteJSON(w, map[string]string{"status": "success"})
 	}
 }
 
@@ -87,7 +88,7 @@ func handleDeleteChannelEPG(_ *proxy.StreamProxy) http.HandlerFunc {
 		}
 
 		addLogEntry("info", fmt.Sprintf("EPG mapping cleared for channel %s", channelName))
-		json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+		utils.WriteJSON(w, map[string]string{"status": "success"})
 	}
 }
 
@@ -99,12 +100,12 @@ func handleSearchEPGChannels(_ *proxy.StreamProxy) http.HandlerFunc {
 
 		q := r.URL.Query().Get("q")
 		if q == "" {
-			json.NewEncoder(w).Encode([]epgindex.EPGChannel{})
+			utils.WriteJSON(w, []epgindex.EPGChannel{})
 			return
 		}
 
 		results := epgindex.Search(q, 50)
-		json.NewEncoder(w).Encode(results)
+		utils.WriteJSON(w, results)
 	}
 }
 
@@ -134,6 +135,6 @@ func handleGetAllChannelEPGs(_ *proxy.StreamProxy) http.HandlerFunc {
 			return
 		}
 
-		json.NewEncoder(w).Encode(result)
+		utils.WriteJSON(w, result)
 	}
 }

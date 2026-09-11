@@ -236,7 +236,7 @@ func handleGetChannelStreams(sp *proxy.StreamProxy) http.HandlerFunc {
 		}
 
 		channel.Mu.RUnlock()
-		json.NewEncoder(w).Encode(response)
+		utils.WriteJSON(w, response)
 	}
 }
 
@@ -263,7 +263,7 @@ func handleGetChannelStats(sp *proxy.StreamProxy) http.HandlerFunc {
 		defer channel.Mu.RUnlock()
 
 		if channel.Restreamer == nil || !channel.Restreamer.Running.Load() {
-			json.NewEncoder(w).Encode(map[string]any{
+			utils.WriteJSON(w, map[string]any{
 				"streaming": false,
 			})
 			return
@@ -285,7 +285,7 @@ func handleGetChannelStats(sp *proxy.StreamProxy) http.HandlerFunc {
 		}
 		channel.Restreamer.Stats.Mu.RUnlock()
 
-		json.NewEncoder(w).Encode(stats)
+		utils.WriteJSON(w, stats)
 	}
 }
 
@@ -348,7 +348,7 @@ func handleSetChannelStream(sp *proxy.StreamProxy) http.HandlerFunc {
 		channel.Mu.Unlock()
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]any{
+		utils.WriteJSON(w, map[string]any{
 			"status":      "success",
 			"message":     fmt.Sprintf("Stream changed to index %d", request.StreamIndex),
 			"streamIndex": request.StreamIndex,

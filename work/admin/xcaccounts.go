@@ -6,6 +6,7 @@ import (
 	"kptv-proxy/work/config"
 	"kptv-proxy/work/db"
 	"kptv-proxy/work/proxy"
+	"kptv-proxy/work/utils"
 	"net/http"
 	"strconv"
 
@@ -49,7 +50,7 @@ func handleGetXCAccounts(_ *proxy.StreamProxy) http.HandlerFunc {
 			}
 		}
 
-		json.NewEncoder(w).Encode(out)
+		utils.WriteJSON(w, out)
 	}
 }
 
@@ -92,7 +93,7 @@ func handleCreateXCAccount(sp *proxy.StreamProxy) http.HandlerFunc {
 		addLogEntry("info", fmt.Sprintf("XC account created: %s", incoming.Name))
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]any{"status": "success", "id": id})
+		utils.WriteJSON(w, map[string]any{"status": "success", "id": id})
 	}
 }
 
@@ -136,7 +137,7 @@ func handleUpdateXCAccount(sp *proxy.StreamProxy) http.HandlerFunc {
 		reloadXCAccounts(sp)
 		addLogEntry("info", fmt.Sprintf("XC account updated: %s", incoming.Name))
 
-		json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+		utils.WriteJSON(w, map[string]string{"status": "success"})
 	}
 }
 
@@ -161,7 +162,7 @@ func handleDeleteXCAccount(sp *proxy.StreamProxy) http.HandlerFunc {
 		reloadXCAccounts(sp)
 		addLogEntry("info", fmt.Sprintf("XC account deleted: %d", id))
 
-		json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+		utils.WriteJSON(w, map[string]string{"status": "success"})
 	}
 }
 

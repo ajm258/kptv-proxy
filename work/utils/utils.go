@@ -1,11 +1,14 @@
 package utils
 
 import (
+	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"kptv-proxy/work/config"
+	"kptv-proxy/work/logger"
 	"kptv-proxy/work/types"
 	"net"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
@@ -360,4 +363,13 @@ func IsSafeUpstreamURL(raw string) bool {
 		}
 	}
 	return true
+}
+
+// WriteJSON encodes v as the JSON response body, logging any encode failure.
+// A response that dies after its headers are already on the wire otherwise
+// leaves no trace at all.
+func WriteJSON(w http.ResponseWriter, v any) {
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		logger.Error("{utils - WriteJSON} Failed to encode response: %v", err)
+	}
 }
