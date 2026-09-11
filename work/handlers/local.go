@@ -7,6 +7,7 @@ import (
 	"kptv-proxy/work/logger"
 	"kptv-proxy/work/proxy"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -94,8 +95,15 @@ func HandleLocalArtwork(sp *proxy.StreamProxy) http.HandlerFunc {
 		}
 
 		// Remote art was stored verbatim from the sidecar — redirect rather
-		// than proxy it.
+		// than proxy it, but only to a well-formed absolute http(s) target
+		// with no embedded credentials, since the value comes from scanned
+		// file content.
 		if strings.HasPrefix(art, "http://") || strings.HasPrefix(art, "https://") {
+			if !remoteArtworkAllowed(art) {
+				logger.Warn("{handlers/local - HandleLocalArtwork} refusing malformed remote artwork target: %s", art)
+				http.Error(w, "Not found", http.StatusNotFound)
+				return
+			}
 			http.Redirect(w, r, art, http.StatusFound)
 			return
 		}
@@ -108,6 +116,29 @@ func HandleLocalArtwork(sp *proxy.StreamProxy) http.HandlerFunc {
 
 		serveLocalFile(w, r, art)
 	}
+}
+
+// remoteArtworkAllowed reports whether a remote artwork value from an NFO
+// sidecar is safe to hand to http.Redirect.
+func remoteArtworkAllowed(art string) bool {
+	if strings.ContainsAny(art, "\r\n") {
+		return false
+	}
+
+	u, err := url.Parse(art)
+	if err != nil {
+		return false
+	}
+
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+
+	if u.Host == "" || u.User != nil {
+		return false
+	}
+
+	return true
 }
 
 // localEntryAllowed reports whether an XC account's content toggles permit the
