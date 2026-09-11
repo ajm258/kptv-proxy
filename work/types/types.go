@@ -84,25 +84,24 @@ type Channel struct {
 // and resource management capabilities. All operations are designed for high concurrency
 // with minimal contention between client operations and background maintenance tasks.
 type Restreamer struct {
-	Channel                 *Channel                                   // Reference to parent channel for stream access and metadata
-	Clients                 *xsync.MapOf[string, *RestreamClient]      // Thread-safe map of client ID -> *RestreamClient for concurrent access
-	ClientCount             atomic.Int32                               // Live count of entries in Clients, maintained by AddClient/RemoveClient so hot loops need no map walk
-	SourceCache             *xsync.MapOf[string, *config.SourceConfig] // Cached URL -> source lookups to reduce per-segment source resolution overhead
-	Running                 atomic.Bool                                // Atomic flag indicating active streaming state (true=streaming, false=stopped)
-	ctx                     atomic.Pointer[CtxBundle]                  // Current streaming context+cancel pair, swapped atomically to avoid torn reads
-	CurrentIndex            int32                                      // Atomic storage of currently active stream index within channel
-	LastActivity            atomic.Int64                               // Atomic Unix timestamp of most recent streaming activity for cleanup logic
-	HttpClient              *client.HeaderSettingClient                // HTTP client with custom header support for source authentication
-	Config                  *config.Config                             // Application configuration reference for URL obfuscation and operational parameters
-	RateLimiter             ratelimit.Limiter                          // Hold the rate limitter
-	ManualSwitch            atomic.Bool                                // did we manually switch?
-	ManualSwitchPreventStop atomic.Bool                                // try to prevent stopping playback during a manual switch
-	Stats                   *StreamStats                               // setup the stats
-	Switching               atomic.Bool                                // watcher-initiated switch in progress, prevents premature stopStream
-	Lifecycle               sync.Mutex                                 // serializes stream start (AddClient) vs stop (stopStream) decisions
-	LastStreamFailed        atomic.Bool                                // true if Stream() last exited due to stream failure (not clean client disconnect)
-	BufferPtr               atomic.Pointer[buffer.RingBuffer]          // Shared ring buffer, swapped atomically to avoid torn reads vs watcher/stats
-	SwitchNotify            atomic.Pointer[chan struct{}]              // switch-notify channel, pointer-swapped atomically
+	Channel          *Channel                                   // Reference to parent channel for stream access and metadata
+	Clients          *xsync.MapOf[string, *RestreamClient]      // Thread-safe map of client ID -> *RestreamClient for concurrent access
+	ClientCount      atomic.Int32                               // Live count of entries in Clients, maintained by AddClient/RemoveClient so hot loops need no map walk
+	SourceCache      *xsync.MapOf[string, *config.SourceConfig] // Cached URL -> source lookups to reduce per-segment source resolution overhead
+	Running          atomic.Bool                                // Atomic flag indicating active streaming state (true=streaming, false=stopped)
+	ctx              atomic.Pointer[CtxBundle]                  // Current streaming context+cancel pair, swapped atomically to avoid torn reads
+	CurrentIndex     int32                                      // Atomic storage of currently active stream index within channel
+	LastActivity     atomic.Int64                               // Atomic Unix timestamp of most recent streaming activity for cleanup logic
+	HttpClient       *client.HeaderSettingClient                // HTTP client with custom header support for source authentication
+	Config           *config.Config                             // Application configuration reference for URL obfuscation and operational parameters
+	RateLimiter      ratelimit.Limiter                          // Hold the rate limitter
+	SwitchTo         atomic.Int32                               // pending switch target index, -1 when none
+	attemptCtx       atomic.Pointer[CtxBundle]                  // per-attempt context, cancelled to interrupt a single upstream attempt
+	Stats            *StreamStats                               // setup the stats
+	Lifecycle        sync.Mutex                                 // serializes stream start (AddClient) vs stop (stopStream) decisions
+	LastStreamFailed atomic.Bool                                // true if Stream() last exited due to stream failure (not clean client disconnect)
+	BufferPtr        atomic.Pointer[buffer.RingBuffer]          // Shared ring buffer, swapped atomically to avoid torn reads vs watcher/stats
+	SwitchNotify     atomic.Pointer[chan struct{}]              // switch-notify channel, pointer-swapped atomically
 }
 
 // CtxBundle pairs a context with its cancel func so both can be swapped as a
@@ -229,20 +228,66 @@ func (c *StreamChunk) Release() {
 	}
 }
 
-// Context returns the current streaming context, or a background context if
-// none has been set yet. Safe for concurrent use.
+// Context returns the context bounding the current upstream attempt, falling
+// back to the lifetime context when no attempt is in flight. Streaming paths
+// use this so a switch can interrupt one attempt without stopping the stream.
 func (r *Restreamer) Context() context.Context {
+	if b := r.attemptCtx.Load(); b != nil {
+		return b.Ctx
+	}
+	return r.LifetimeContext()
+}
+
+// LifetimeContext returns the context bounding the whole streaming session.
+// It is cancelled only by a real stop (stopStream, cleanup, shutdown).
+func (r *Restreamer) LifetimeContext() context.Context {
 	if b := r.ctx.Load(); b != nil {
 		return b.Ctx
 	}
 	return context.Background()
 }
 
-// CancelStream cancels the current streaming context if one is set.
+// CancelStream cancels the lifetime context, and with it any in-flight attempt.
 func (r *Restreamer) CancelStream() {
+	r.CancelAttempt()
 	if b := r.ctx.Load(); b != nil && b.Cancel != nil {
 		b.Cancel()
 	}
+}
+
+// SetAttemptContext installs the context for a single upstream attempt.
+func (r *Restreamer) SetAttemptContext(ctx context.Context, cancel context.CancelFunc) {
+	r.attemptCtx.Store(&CtxBundle{Ctx: ctx, Cancel: cancel})
+}
+
+// ClearAttemptContext removes the attempt context so Context falls back to the
+// lifetime context between attempts.
+func (r *Restreamer) ClearAttemptContext() {
+	r.attemptCtx.Store(nil)
+}
+
+// CancelAttempt cancels the in-flight attempt without ending the session.
+func (r *Restreamer) CancelAttempt() {
+	if b := r.attemptCtx.Load(); b != nil && b.Cancel != nil {
+		b.Cancel()
+	}
+}
+
+// RequestSwitch records a target stream index for the streaming loop to adopt
+// on its next iteration.
+func (r *Restreamer) RequestSwitch(index int) {
+	r.SwitchTo.Store(int32(index))
+}
+
+// SwitchPending reports whether a switch request is waiting to be consumed.
+func (r *Restreamer) SwitchPending() bool {
+	return r.SwitchTo.Load() >= 0
+}
+
+// TakeSwitch consumes a pending switch request, returning the target index or
+// -1 when none is pending.
+func (r *Restreamer) TakeSwitch() int {
+	return int(r.SwitchTo.Swap(-1))
 }
 
 // SetContext atomically installs a new context+cancel pair and returns the

@@ -164,8 +164,8 @@ func (r *Restream) streamWithFFmpeg(streamURL string) (bool, int64) {
 		select {
 		case <-r.Context().Done():
 			logger.Debug("{restream/ffmpeg - streamWithFFmpeg} Context cancelled for channel %s (manual switch: %v, total bytes: %d)",
-				r.Channel.Name, r.ManualSwitch.Load(), totalBytes)
-			if r.ManualSwitch.Load() {
+				r.Channel.Name, r.SwitchPending(), totalBytes)
+			if r.SwitchPending() {
 				return true, totalBytes
 			}
 			return totalBytes > constants.Internal.StreamMinViableBytes, totalBytes

@@ -63,7 +63,7 @@ func (r *Restream) collectStreamStats() {
 
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-r.LifetimeContext().Done():
 			return
 		case <-ticker.C:
 			if !r.Running.Load() {

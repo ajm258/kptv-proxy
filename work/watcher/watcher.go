@@ -492,7 +492,7 @@ func (sw *StreamWatcher) evaluateStreamHealthFromState() bool {
 	// normal switching are expected and should not trigger failover
 	if sw.restreamer.Running.Load() {
 		select {
-		case <-sw.restreamer.Context().Done():
+		case <-sw.restreamer.LifetimeContext().Done():
 			if time.Since(sw.lastStreamStart) > constants.Internal.WatcherContextStuckTimeout {
 				logger.Warn("{watcher - evaluateStreamHealthFromState} Channel %s: Context cancelled and stream has been running for >300s",
 					sw.channelName)
@@ -598,123 +598,53 @@ func (sw *StreamWatcher) triggerStreamSwitch(reason string) {
 }
 
 /**
- * forceStreamRestart implements comprehensive stream restart operations for failover.
+ * forceStreamRestart requests a failover to an alternative stream.
  *
- * The restart sequence includes:
- *   - Atomic preference index updates for consistent state
- *   - Graceful shutdown of current streaming infrastructure
- *   - Buffer reset and context recreation for fresh start
- *   - Client connection validation and preservation
- *   - Integration with existing streaming logic for restart coordination
+ * The request is handed to the restreamer's running stream loop, which adopts
+ * the new index on its next iteration. Only the in-flight attempt is cancelled:
+ * the streaming context, the buffer, and the client connections all survive.
  *
  * @param newIndex Index of alternative stream for failover operation
  */
 func (sw *StreamWatcher) forceStreamRestart(newIndex int) {
-	logger.Debug("{watcher - forceStreamRestart} Channel %s: Starting forced restart to stream index %d",
+	logger.Debug("{watcher - forceStreamRestart} Channel %s: Requesting switch to stream index %d",
 		sw.channelName, newIndex)
-
-	// mark a switch in progress so RemoveClient does not call stopStream()
-	// and kill the new stream before it has a chance to start
-	sw.restreamer.Switching.Store(true)
 
 	// clients stay on their existing HTTP connections through the switch —
 	// VLC and most players treat a closed connection as end-of-stream and
-	// will not re-request, so the new stream resumes into the same sockets
-	// (same strategy as ForceStreamSwitch); TS decoders resync after the
-	// discontinuity
+	// will not re-request, so the new stream resumes into the same sockets;
+	// TS decoders resync after the discontinuity
 	hadClients := false
 	sw.restreamer.Clients.Range(func(_ string, _ *types.RestreamClient) bool {
 		hadClients = true
 		return false
 	})
 
+	if !hadClients {
+		logger.Warn("{watcher - forceStreamRestart} Channel %s: No clients connected, skipping switch", sw.channelName)
+		return
+	}
+
 	// Update preferred stream index atomically
 	atomic.StoreInt32(&sw.restreamer.Channel.PreferredStreamIndex, int32(newIndex))
-	atomic.StoreInt32(&sw.restreamer.CurrentIndex, int32(newIndex))
 
-	logger.Debug("{watcher - forceStreamRestart} Channel %s: Updated stream indices to %d", sw.channelName, newIndex)
-
-	// signal that this is a controlled switch so the Stream() loop
-	// does not misclassify the context cancellation as a failure
-	sw.restreamer.ManualSwitch.Store(true)
-
-	// Gracefully terminate current streaming operations. CancelStream cancels
-	// whatever context is currently installed (the old one), signalling the
-	// running goroutine to exit during the deadline-wait below.
-	deadline := time.Now().Add(constants.Internal.WatcherRestartDeadline)
-	for time.Now().Before(deadline) {
-		if !sw.restreamer.Running.Load() {
-			break
-		}
-		// signal the old goroutine to exit on first iteration, then poll
-		sw.restreamer.CancelStream()
-		time.Sleep(constants.Internal.WatcherRestartPollInterval)
+	if !sw.restreamer.Running.Load() {
+		atomic.StoreInt32(&sw.restreamer.CurrentIndex, int32(newIndex))
+		logger.Debug("{watcher - forceStreamRestart} Channel %s: Stream not running, index updated only", sw.channelName)
+		return
 	}
 
-	// Create fresh context for new streaming session
-	ctx, cancel := context.WithCancel(context.Background())
-	sw.restreamer.SetContext(ctx, cancel)
-
-	logger.Debug("{watcher - forceStreamRestart} Channel %s: Created new streaming context", sw.channelName)
-
-	// Reset buffer state for clean restart
-	if b := sw.restreamer.LoadBuffer(); b != nil && !b.IsDestroyed() {
-		b.Reset()
-		logger.Debug("{watcher - forceStreamRestart} Channel %s: Reset buffer", sw.channelName)
-	}
-
-	logger.Debug("{watcher - forceStreamRestart} Channel %s: Had clients before switch: %v", sw.channelName, hadClients)
-
-	if hadClients {
-		// Initiate new streaming session
-		sw.restreamer.Running.Store(true)
-		sw.lastStreamStart = time.Now()
-
-		logger.Debug("{watcher - forceStreamRestart} Channel %s: Starting new stream session", sw.channelName)
-		go sw.restartWithExistingLogic()
-	} else {
-		logger.Warn("{watcher - forceStreamRestart} Channel %s: No clients connected, skipping restart", sw.channelName)
-	}
+	// hand the target to the running loop and interrupt the current attempt
+	sw.restreamer.RequestSwitch(newIndex)
+	sw.restreamer.CancelAttempt()
+	sw.lastStreamStart = time.Now()
 
 	// Reset failure tracking
 	atomic.StoreInt32(&sw.consecutiveFailures, 0)
 	atomic.StoreInt32(&sw.totalFailures, 0)
 	sw.lastFailureReset = time.Now()
 
-	logger.Debug("{watcher - forceStreamRestart} Channel %s: Reset failure counters", sw.channelName)
-}
-
-/**
- * restartWithExistingLogic provides integration between watcher-initiated failover
- * and established restreaming infrastructure.
- */
-func (sw *StreamWatcher) restartWithExistingLogic() {
-	logger.Debug("{watcher - restartWithExistingLogic} Channel %s: Entering restart logic", sw.channelName)
-
-	defer func() {
-		if rec := recover(); rec != nil {
-			logger.Error("{watcher - restartWithExistingLogic} Channel %s: Recovered from panic: %v",
-				sw.channelName, rec)
-		}
-		// clear the switching flag now that the new stream goroutine has finished —
-		// keeping it true for the full duration prevents RemoveClient from calling
-		// stopStream() while the new stream is starting up
-		sw.restreamer.Switching.Store(false)
-		sw.restreamer.Running.Store(false)
-		logger.Debug("{watcher - restartWithExistingLogic} Channel %s: Restart completed, running=false", sw.channelName)
-	}()
-
-	currentIdx := int(atomic.LoadInt32(&sw.restreamer.CurrentIndex))
-	logger.Debug("{watcher - restartWithExistingLogic} Channel %s: Starting stream restart at index %d",
-		sw.channelName, currentIdx)
-
-	r := &restream.Restream{Restreamer: sw.restreamer}
-
-	// These are normally started by AddClient but are not running after a watcher-triggered switch
-	r.RestartMonitors()
-	r.WatcherStream()
-
-	logger.Debug("{watcher - restartWithExistingLogic} Channel %s: Stream restart logic completed", sw.channelName)
+	logger.Debug("{watcher - forceStreamRestart} Channel %s: Switch requested, failure counters reset", sw.channelName)
 }
 
 /**

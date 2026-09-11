@@ -47,6 +47,16 @@ var streamBufferPool = sync.Pool{
 	},
 }
 
+// streamOutcome classifies the result of a single upstream attempt.
+type streamOutcome int
+
+const (
+	outcomeStopped streamOutcome = iota
+	outcomeSwitch
+	outcomeSuccess
+	outcomeFailure
+)
+
 // getStreamBuffer retrieves a 32KB buffer from the pool for stream processing.
 // The buffer should be returned to the pool via putStreamBuffer when no longer needed.
 //
@@ -98,6 +108,7 @@ func NewRestreamer(channel *types.Channel, bufferSize int64, httpClient *client.
 
 	base.LastActivity.Store(time.Now().Unix())
 	base.Running.Store(false)
+	base.SwitchTo.Store(-1)
 
 	logger.Debug("{restream/restream - NewRestreamer} Restreamer initialized for channel %s", channel.Name)
 
@@ -149,6 +160,16 @@ func (r *Restream) AddClient(id string, w http.ResponseWriter, flusher http.Flus
 	started := false
 	if !r.Running.Load() && r.Running.CompareAndSwap(false, true) {
 		logger.Debug("{restream/restream - AddClient} Channel %s: Starting", r.Channel.Name)
+
+		// install the lifetime context here rather than in stopStream, so a
+		// context is never replaced underneath a running Stream() goroutine
+		if ctx := r.LifetimeContext(); ctx.Err() != nil {
+			newCtx, newCancel := context.WithCancel(context.Background())
+			r.SetContext(newCtx, newCancel)
+		}
+		r.ClearAttemptContext()
+		r.SwitchTo.Store(-1)
+
 		go r.Stream()
 		go r.monitorClientHealth()
 		go r.StartStatsCollection()
@@ -190,14 +211,8 @@ func (r *Restream) RemoveClient(id string) {
 		logger.Debug("{restream/restream - RemoveClient} Channel %s: Client %s removed, remaining: %d", r.Channel.Name, id, clientCount)
 
 		if clientCount == 0 {
-			// do not stop the stream if a watcher-initiated switch is in progress —
-			// the new goroutine is starting up and needs the context and buffer intact
-			if r.Switching.Load() {
-				logger.Debug("{restream/restream - RemoveClient} Channel %s: No more clients but switch in progress, skipping stop", r.Channel.Name)
-			} else {
-				logger.Debug("{restream/restream - RemoveClient} Channel %s: No more clients", r.Channel.Name)
-				r.stopStream()
-			}
+			logger.Debug("{restream/restream - RemoveClient} Channel %s: No more clients", r.Channel.Name)
+			r.stopStream()
 		}
 	}
 
@@ -236,16 +251,18 @@ func (r *Restream) stopStream() {
 		}
 		r.StoreBuffer(nil)
 
-		// Reset streaming context and index for future restarts
-		newCtx, newCancel := context.WithCancel(context.Background())
-		r.SetContext(newCtx, newCancel)
-
+		// the context is NOT recreated here — AddClient installs a fresh one
+		// when the next session starts, so a running Stream() goroutine never
+		// has its context swapped out from under it
 	}
 }
 
-// Stream is the main streaming loop for the restreamer.
-// It attempts to stream from preferred or fallback sources, handles failures,
-// switches streams when necessary, and manages retry logic.
+// Stream is the main streaming loop for the restreamer. It owns the current
+// stream index and runs one attempt at a time, reacting to the outcome of each:
+// a stop ends the loop, a switch request adopts a new index, a success
+// reconnects to the same index, and a failure rotates and retries until the
+// attempt budget is spent, at which point the fallback video plays before the
+// budget resets.
 func (r *Restream) Stream() {
 
 	// Ensure panic recovery to avoid crashing the whole process
@@ -257,6 +274,7 @@ func (r *Restream) Stream() {
 
 		// Mark restreamer as no longer running
 		r.Running.Store(false)
+		r.ClearAttemptContext()
 
 		// Reset active connections metric
 		metrics.ActiveConnections.WithLabelValues(r.Channel.Name).Set(0)
@@ -274,294 +292,203 @@ func (r *Restream) Stream() {
 		return
 	}
 
-	// Load indexes for current and preferred streams
-	currentIndex := int(atomic.LoadInt32(&r.CurrentIndex))
-	preferredIndex := int(atomic.LoadInt32(&r.Channel.PreferredStreamIndex))
-
-	// Decide starting index and set it immediately
-	var startingIndex int
-	if currentIndex >= 0 && currentIndex < streamCount && currentIndex == preferredIndex {
-		startingIndex = currentIndex
-		logger.Debug("{restream/restream - Stream} Channel %s: Using manually set stream index %d", r.Channel.Name, currentIndex)
-
-	} else {
-		if preferredIndex >= 0 && preferredIndex < streamCount {
-			startingIndex = preferredIndex
-			logger.Debug("{restream/restream - Stream} Channel %s: Starting with preferred stream index %d", r.Channel.Name, preferredIndex)
-
-		} else {
-			startingIndex = 0
-			logger.Debug("{restream/restream - Stream} Channel %s: Starting with default stream index 0", r.Channel.Name)
-
-		}
-	}
-
 	// Set the current index immediately so other components can read it correctly
-	atomic.StoreInt32(&r.CurrentIndex, int32(startingIndex))
+	atomic.StoreInt32(&r.CurrentIndex, int32(r.startingIndex(streamCount)))
 
 	// Retry configuration
 	maxTotalAttempts := streamCount * constants.Internal.StreamMaxAttemptsMultiplier // maximum attempts across streams
 	totalAttempts := 0                                                               // attempts counter
-	triedPreferred := false                                                          // whether the preferred was tried
 	consecutiveFailures := make(map[int]int)                                         // map of stream index → consecutive failures
 
-	// Loop until all attempts exhausted
-	for totalAttempts < maxTotalAttempts {
-		select {
-		case <-r.Context().Done():
-			isManualSwitch := r.ManualSwitch.Load()
+	for {
 
-			if isManualSwitch {
-				// watcher owns this restart - exit cleanly and let restartWithExistingLogic handle it
-				logger.Debug("{restream/restream - Stream} Channel %s: Exiting for watcher-controlled switch", r.Channel.Name)
-				r.ManualSwitch.Store(false)
-				return
-			}
-
-			logger.Debug("{restream/restream - Stream} Channel %s: Context done, manual=%v, attempts=%d/%d",
-				r.Channel.Name, isManualSwitch, totalAttempts, maxTotalAttempts)
-
-			// Count clients still connected
-			clientCount := int(r.ClientCount.Load())
-
-			// non-manual cancellation is always deliberate (stopStream or app
-			// shutdown) — exit rather than self-heal with a fresh context,
-			// which resurrected killed streams and could clobber the context
-			// of a newly launched Stream() goroutine, leaving two running
-			logger.Debug("{restream/restream - Stream} Channel %s: Deliberate cancellation with %d clients, exiting", r.Channel.Name, clientCount)
+		// deliberate cancellation (stopStream or shutdown) always ends the loop
+		if r.LifetimeContext().Err() != nil {
+			logger.Debug("{restream/restream - Stream} Channel %s: Session cancelled, exiting", r.Channel.Name)
 			return
-
-		default:
 		}
 
-		// Count active clients
-		clientCount := int(r.ClientCount.Load())
-
 		// Bail if no clients
-		if clientCount == 0 {
+		if r.ClientCount.Load() == 0 {
 			logger.Debug("{restream/restream - Stream} Channel %s: No clients remaining", r.Channel.Name)
 			r.LastStreamFailed.Store(true)
 			return
+		}
+
+		// Adopt any pending switch target before the next attempt
+		if target := r.TakeSwitch(); target >= 0 && target < streamCount {
+			logger.Debug("{restream/restream - Stream} Channel %s: Adopting switch to stream %d", r.Channel.Name, target)
+			atomic.StoreInt32(&r.CurrentIndex, int32(target))
+			totalAttempts = 0
+			consecutiveFailures = make(map[int]int)
+		}
+
+		// Attempt budget spent — play the fallback video, then start over
+		if totalAttempts >= maxTotalAttempts {
+			logger.Debug("{restream/restream - Stream} Channel %s: All streams failed after %d attempts", r.Channel.Name, totalAttempts)
+			if !r.runFallback() {
+				return
+			}
+			totalAttempts = 0
+			consecutiveFailures = make(map[int]int)
+			continue
 		}
 
 		// Get current index and increment attempts
 		currentIdx := int(atomic.LoadInt32(&r.CurrentIndex))
 		totalAttempts++
 
-		// DON'T reset buffer during manual switch
-		if !r.ManualSwitch.Load() {
-			r.resetBufferSafely()
-		}
+		outcome, bytesTransferred := r.runAttempt(currentIdx)
+		logger.Debug("{restream/restream - Stream} Channel %s: Stream %d outcome %d (%d bytes)", r.Channel.Name, currentIdx, outcome, bytesTransferred)
 
-		// Attempt to stream from source
-		logger.Debug("{restream/restream - Stream} Channel %s: Attempting stream %d, manual switch flag: %t",
-			r.Channel.Name, currentIdx, r.ManualSwitch.Load())
+		switch outcome {
 
-		success, bytesTransferred := r.StreamFromSource(currentIdx)
-
-		// Check if this was a manual switch AFTER the stream attempt
-		wasManualSwitch := r.ManualSwitch.Load()
-		logger.Debug("{restream/restream - Stream} Channel %s: Stream %d success: %t, manual switch: %t",
-			r.Channel.Name, currentIdx, success, wasManualSwitch)
-
-		// Reset manual switch flag for new stream attempt
-		r.ManualSwitch.Store(false)
-
-		// if the stream was successful
-		if success {
-
-			// Check if this was a very brief success (likely a failure)
-			if bytesTransferred < constants.Internal.BriefSuccessThreshold { // Less than 64K suggests very brief connection
-				consecutiveFailures[currentIdx]++
-				logger.Debug("{restream/restream - Stream} Channel %s: Stream %d succeeded briefly (%d bytes), treating as failure", r.Channel.Name, currentIdx, bytesTransferred)
-
-				// Don't return, continue to try next stream
-			} else {
-
-				// Reset failure count for substantial success
-				consecutiveFailures[currentIdx] = 0
-				logger.Debug("{restream/restream - Stream} Channel %s: Stream %d succeeded with %d bytes, resetting failure count", r.Channel.Name, currentIdx, bytesTransferred)
-
-				// For manual switches, don't return - continue to stream the new index
-				if wasManualSwitch {
-					r.ManualSwitch.Store(false)
-					// if this is a watcher-initiated switch, exit immediately —
-					// restartWithExistingLogic is already launching a new Stream() goroutine
-					// and continuing here would create two goroutines streaming simultaneously
-					if r.Switching.Load() {
-						logger.Debug("{restream/restream - Stream} Channel %s: Watcher switch detected, exiting loop to let restartWithExistingLogic take over", r.Channel.Name)
-						return
-					}
-					newIdx := int(atomic.LoadInt32(&r.CurrentIndex))
-					logger.Debug("{restream/restream - Stream} Channel %s: Manual switch succeeded, continuing with stream %d", r.Channel.Name, newIdx)
-					totalAttempts = 0
-					consecutiveFailures = make(map[int]int)
-					continue
-				}
-
-				// Check if context was cancelled due to manual switch
-				if r.Context().Err() != nil {
-					isManualSwitch := r.ManualSwitch.Load()
-					if isManualSwitch {
-						logger.Debug("{restream/restream - Stream} Channel %s: Context cancelled due to manual switch, continuing", r.Channel.Name)
-
-						r.ManualSwitch.Store(false)
-
-						select {
-						case <-time.After(constants.Internal.RetryDelay):
-						case <-r.Context().Done():
-							return
-						}
-
-						continue
-					}
-				}
-
-				// check if clients are still connected before deciding to loop or exit
-				clientCount := int(r.ClientCount.Load())
-
-				if clientCount == 0 {
-					// no clients, legitimate stop
-					r.LastStreamFailed.Store(false)
-					return
-				}
-
-				// clients still connected — segment boundary, reconnect immediately
-				totalAttempts = 0
-				consecutiveFailures = make(map[int]int)
-				triedPreferred = false
-				r.LastStreamFailed.Store(false)
-
-				// Pause before restarting to prevent rapid cycling on short .ts
-				// segments — gives the client's WriteChan time to drain fully.
-				// Use Sleep instead of select on r.Ctx.Done() since stopStream
-				// cancels and immediately recreates the context, causing a false exit.
-				time.Sleep(constants.Internal.EOFRestartDelay)
-
-				continue
-			}
-
-		}
-
-		// A manual (non-watcher) switch cancels the in-flight stream, which
-		// surfaces here as a forced-close "failure" of the OLD index. Honor the
-		// operator's choice: don't rotate or penalize, just resume at the
-		// manually selected CurrentIndex. Watcher switches set Switching and keep
-		// their own failover logic, so they are excluded here.
-		if wasManualSwitch && !r.Switching.Load() {
-			logger.Debug("{restream/restream - Stream} Channel %s: Manual switch interrupted stream %d, resuming at selected index %d",
-				r.Channel.Name, currentIdx, int(atomic.LoadInt32(&r.CurrentIndex)))
-			totalAttempts = 0
-			triedPreferred = false
-			consecutiveFailures = make(map[int]int)
-			continue
-		}
-
-		// If we reach here, either it was a failure or brief success - continue to next stream
-		// Increment consecutive failure count
-		consecutiveFailures[currentIdx]++
-
-		// debug logging
-		logger.Debug("{restream/restream - Stream} Channel %s: Stream %d failed (consecutive failures: %d)",
-			r.Channel.Name, currentIdx, consecutiveFailures[currentIdx])
-
-		// Handle multiple failures → mark stream as bad
-		if consecutiveFailures[currentIdx] >= constants.Internal.StreamConsecutiveFailureThreshold {
-			r.Channel.Mu.RLock()
-			if currentIdx < len(r.Channel.Streams) {
-				currentStream := r.Channel.Streams[currentIdx]
-				r.Channel.Mu.RUnlock()
-
-				// Record the failure for monitoring/blocking
-				stream.HandleStreamFailure(currentStream, r.Config, r.Channel.Name, currentIdx)
-
-				// debug logging
-				logger.Debug("{restream/restream - Stream} Channel %s: Stream %d failed %d consecutive times, tracked for potential auto-blocking",
-					r.Channel.Name, currentIdx, consecutiveFailures[currentIdx])
-
-			} else {
-				r.Channel.Mu.RUnlock()
-			}
-		}
-
-		// Mark preferred as tried — reload the index since the watcher or an
-		// admin action may have changed it after the loop started
-		if livePreferred := int(atomic.LoadInt32(&r.Channel.PreferredStreamIndex)); currentIdx == livePreferred && !triedPreferred {
-			triedPreferred = true
-			logger.Debug("{restream/restream - Stream} Channel %s: Preferred stream %d failed, trying fallback streams", r.Channel.Name, livePreferred)
-
-		}
-
-		// If multiple streams, rotate index
-		if streamCount > 1 {
-			newIdx := (currentIdx + 1) % streamCount
-			atomic.StoreInt32(&r.CurrentIndex, int32(newIdx))
-			logger.Debug("{restream/restream - Stream} Channel %s: Switching from stream %d to stream %d", r.Channel.Name, currentIdx, newIdx)
-
-		}
-
-		// Add jitter to prevent thundering herd when multiple channels fail simultaneously
-		jitter := constants.Internal.StreamJitterMinMs + time.Duration(time.Now().UnixNano())%constants.Internal.StreamJitterRangeMs
-
-		// Sleep briefly before retry
-		select {
-		case <-r.Context().Done():
-			isManualSwitch := r.ManualSwitch.Load()
-
-			if isManualSwitch {
-				logger.Debug("{restream/restream - Stream} Channel %s: Manual switch during retry delay", r.Channel.Name)
-			} else {
-				logger.Debug("{restream/restream - Stream} Channel %s: Context cancelled during retry", r.Channel.Name)
-			}
-
-			// Count clients
-			clientCount := int(r.ClientCount.Load())
-
-			// manual switch: the switcher (ForceStreamSwitch) already installed
-			// a fresh context before cancelling the old one — just resume the
-			// loop on it; creating another here clobbered the switcher's
-			if isManualSwitch && clientCount > 0 {
-				logger.Debug("{restream/restream - Stream} Channel %s: %d clients connected, continuing after manual switch", r.Channel.Name, clientCount)
-				r.ManualSwitch.Store(false)
-				time.Sleep(constants.Internal.RetryDelay)
-				continue
-			}
-
-			// non-manual: deliberate stop or shutdown — exit
+		case outcomeStopped:
+			r.LastStreamFailed.Store(false)
 			return
-		case <-time.After(jitter): // between .05 and .5 seconds
-		}
 
+		case outcomeSwitch:
+			continue
+
+		case outcomeSuccess:
+			consecutiveFailures[currentIdx] = 0
+			totalAttempts = 0
+			r.LastStreamFailed.Store(false)
+
+			// Pause before reconnecting to prevent rapid cycling on short .ts
+			// segments — gives the client's WriteChan time to drain fully
+			select {
+			case <-r.LifetimeContext().Done():
+				return
+			case <-time.After(constants.Internal.EOFRestartDelay):
+			}
+			continue
+
+		case outcomeFailure:
+			consecutiveFailures[currentIdx]++
+			logger.Debug("{restream/restream - Stream} Channel %s: Stream %d failed (consecutive failures: %d)",
+				r.Channel.Name, currentIdx, consecutiveFailures[currentIdx])
+			r.recordStreamFailure(currentIdx, consecutiveFailures[currentIdx])
+
+			// If multiple streams, rotate index
+			if streamCount > 1 {
+				newIdx := (currentIdx + 1) % streamCount
+				atomic.StoreInt32(&r.CurrentIndex, int32(newIdx))
+				logger.Debug("{restream/restream - Stream} Channel %s: Switching from stream %d to stream %d", r.Channel.Name, currentIdx, newIdx)
+			}
+
+			// Add jitter to prevent thundering herd when multiple channels fail simultaneously
+			jitter := constants.Internal.StreamJitterMinMs + time.Duration(time.Now().UnixNano())%constants.Internal.StreamJitterRangeMs
+
+			select {
+			case <-r.LifetimeContext().Done():
+				return
+			case <-time.After(jitter):
+			}
+		}
+	}
+}
+
+// startingIndex resolves the index the loop begins at, preferring a manually
+// set current index, then the channel's preferred index, then zero.
+func (r *Restream) startingIndex(streamCount int) int {
+	currentIndex := int(atomic.LoadInt32(&r.CurrentIndex))
+	preferredIndex := int(atomic.LoadInt32(&r.Channel.PreferredStreamIndex))
+
+	if currentIndex >= 0 && currentIndex < streamCount && currentIndex == preferredIndex {
+		logger.Debug("{restream/restream - startingIndex} Channel %s: Using manually set stream index %d", r.Channel.Name, currentIndex)
+		return currentIndex
 	}
 
-	// If we reached here, all streams failed
-	logger.Debug("{restream/restream - Stream} Channel %s: All streams failed after %d attempts", r.Channel.Name, totalAttempts)
-
-	// Log final failure counts
-	for streamIdx, failures := range consecutiveFailures {
-		if failures > 0 {
-			logger.Debug("{restream/restream - Stream} Channel %s: Stream %d had %d consecutive failures",
-				r.Channel.Name, streamIdx, failures)
-		}
+	if preferredIndex >= 0 && preferredIndex < streamCount {
+		logger.Debug("{restream/restream - startingIndex} Channel %s: Starting with preferred stream index %d", r.Channel.Name, preferredIndex)
+		return preferredIndex
 	}
 
-	// Start fallback video if we still have clients
-	clientCount := int(r.ClientCount.Load())
+	logger.Debug("{restream/restream - startingIndex} Channel %s: Starting with default stream index 0", r.Channel.Name)
+	return 0
+}
 
-	if clientCount > 0 {
-		r.streamFallbackVideo()
+// runAttempt runs one upstream attempt under its own cancellable context and
+// classifies the result. Cancelling that context interrupts only the attempt,
+// leaving the session context intact.
+//
+// Returns:
+//   - streamOutcome: classification of the attempt
+//   - int64: bytes transferred during the attempt
+func (r *Restream) runAttempt(index int) (streamOutcome, int64) {
 
-		// fallback returned with clients still connected — reset the attempt
-		// counters and re-enter the source retry loop so a transient provider
-		// outage does not strand clients on the loading video permanently
-		clientCount = int(r.ClientCount.Load())
+	ctx, cancel := context.WithCancel(r.LifetimeContext())
+	r.SetAttemptContext(ctx, cancel)
+	defer func() {
+		cancel()
+		r.ClearAttemptContext()
+	}()
 
-		if clientCount > 0 && r.Context().Err() == nil {
-			logger.Debug("{restream/restream - Stream} Channel %s: Retrying real sources after fallback period", r.Channel.Name)
-			r.Stream()
-		}
+	r.resetBufferSafely()
+
+	logger.Debug("{restream/restream - runAttempt} Channel %s: Attempting stream %d", r.Channel.Name, index)
+	success, bytesTransferred := r.StreamFromSource(index)
+
+	if r.SwitchPending() {
+		return outcomeSwitch, bytesTransferred
 	}
 
+	if r.LifetimeContext().Err() != nil || r.ClientCount.Load() == 0 {
+		return outcomeStopped, bytesTransferred
+	}
+
+	// a very brief success is a failure in disguise
+	if success && bytesTransferred >= constants.Internal.BriefSuccessThreshold {
+		return outcomeSuccess, bytesTransferred
+	}
+
+	return outcomeFailure, bytesTransferred
+}
+
+// recordStreamFailure tracks a failing stream for potential auto-blocking once
+// it has failed enough consecutive times.
+func (r *Restream) recordStreamFailure(index int, failures int) {
+
+	if failures < constants.Internal.StreamConsecutiveFailureThreshold {
+		return
+	}
+
+	r.Channel.Mu.RLock()
+	if index >= len(r.Channel.Streams) {
+		r.Channel.Mu.RUnlock()
+		return
+	}
+	currentStream := r.Channel.Streams[index]
+	r.Channel.Mu.RUnlock()
+
+	stream.HandleStreamFailure(currentStream, r.Config, r.Channel.Name, index)
+
+	logger.Debug("{restream/restream - recordStreamFailure} Channel %s: Stream %d failed %d consecutive times, tracked for potential auto-blocking",
+		r.Channel.Name, index, failures)
+}
+
+// runFallback plays the offline video for its configured period so a transient
+// provider outage does not strand clients, then reports whether the loop should
+// carry on retrying real sources.
+func (r *Restream) runFallback() bool {
+
+	if r.ClientCount.Load() == 0 {
+		return false
+	}
+
+	ctx, cancel := context.WithCancel(r.LifetimeContext())
+	r.SetAttemptContext(ctx, cancel)
+	r.streamFallbackVideo()
+	cancel()
+	r.ClearAttemptContext()
+
+	if r.ClientCount.Load() == 0 || r.LifetimeContext().Err() != nil {
+		return false
+	}
+
+	logger.Debug("{restream/restream - runFallback} Channel %s: Retrying real sources after fallback period", r.Channel.Name)
+	return true
 }
 
 // StreamFromSource attempts to stream from a specific source index.
@@ -959,11 +886,10 @@ func (r *Restream) streamFromResponse(resp *http.Response, prefix []byte) (bool,
 	for {
 		select {
 		case <-r.Context().Done():
-			if r.ManualSwitch.Load() {
+			if r.SwitchPending() {
 				logger.Debug("{restream/restream - streamFromResponse} Channel %s: Graceful switch", r.Channel.Name)
 				return true, totalBytes
 			}
-			return totalBytes > constants.Internal.StreamMinViableBytes, totalBytes
 		default:
 		}
 
@@ -1028,7 +954,7 @@ func (r *Restream) streamFromResponse(resp *http.Response, prefix []byte) (bool,
 				return success, totalBytes
 			}
 
-			if r.Context().Err() != nil && r.ManualSwitch.Load() {
+			if r.Context().Err() != nil && r.SwitchPending() {
 				return true, totalBytes
 			}
 
@@ -1107,7 +1033,7 @@ func (r *Restream) SafeBufferWrite(data []byte) bool {
 	// Check if context cancelled due to manual switch - allow this to succeed
 	select {
 	case <-r.Context().Done():
-		if r.ManualSwitch.Load() {
+		if r.SwitchPending() {
 			// still write the data if the buffer is alive so the watcher's
 			// throughput tracking and stats peeks don't see a false gap —
 			// previously this returned success while silently skipping the
@@ -1142,7 +1068,7 @@ func (r *Restream) monitorClientHealth() {
 
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-r.LifetimeContext().Done():
 			logger.Debug("{restream/restream - monitorClientHealth} Health monitor stopping for channel %s", r.Channel.Name)
 			return
 		case <-ticker.C:
@@ -1190,52 +1116,26 @@ func (r *Restream) WatcherStream() {
 	r.Stream()
 }
 
-// ForceStreamSwitch forces a switch to a specific stream index while preserving clients
+// ForceStreamSwitch requests a switch to a specific stream index while
+// preserving clients. The running loop adopts the request on its next
+// iteration; only the in-flight attempt is cancelled, never the session.
 func (r *Restream) ForceStreamSwitch(newIndex int) {
 	logger.Debug("{restream/restream - ForceStreamSwitch} Channel %s: Switching to stream %d", r.Channel.Name, newIndex)
-
-	// Mark this as a manual switch so context cancellation won't be treated as failure
-	r.ManualSwitch.Store(true)
 
 	// Update preferred stream index on the channel
 	atomic.StoreInt32(&r.Channel.PreferredStreamIndex, int32(newIndex))
 
-	// Update current index
-	atomic.StoreInt32(&r.CurrentIndex, int32(newIndex))
-
 	// If not running, just update index
 	if !r.Running.Load() {
+		atomic.StoreInt32(&r.CurrentIndex, int32(newIndex))
 		return
 	}
 
-	// Count clients before switch
-	clientCount := 0
-	r.Clients.Range(func(key string, value *types.RestreamClient) bool {
-		clientCount++
-		return true
-	})
-
-	logger.Debug("{restream/restream - ForceStreamSwitch} Channel %s: Forcing switch to stream %d with %d clients", r.Channel.Name, newIndex, clientCount)
-
-	// create new context and install it atomically before cancelling the old one
-	newCtx, newCancel := context.WithCancel(context.Background())
-	oldBundle := r.SetContext(newCtx, newCancel)
-
-	// restart background monitors since they are tied to the previous context
-	go r.RestartMonitors()
-
-	// cancel the OLD context so the running goroutine stops. Clients stay on the
-	// same HTTP connection — VLC treats a closed connection as end-of-stream and
-	// will not re-request, so we keep it open and let Stream() resume into it.
-	if oldBundle != nil && oldBundle.Cancel != nil {
-		oldBundle.Cancel()
-	}
-
-	// Reset (not destroy) the buffer for reuse by the resuming loop.
-	if b := r.LoadBuffer(); b != nil && !b.IsDestroyed() {
-		b.Reset()
-		logger.Debug("{restream/restream - ForceStreamSwitch} Channel %s: Buffer reset for switch", r.Channel.Name)
-	}
+	// Clients stay on the same HTTP connection — VLC treats a closed connection
+	// as end-of-stream and will not re-request, so we keep it open and let the
+	// loop resume into it on the new index.
+	r.RequestSwitch(newIndex)
+	r.CancelAttempt()
 }
 
 // resetBufferSafely resets the buffer while preserving client connections

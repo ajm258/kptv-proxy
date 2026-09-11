@@ -69,7 +69,7 @@ type StreamProxy struct {
 	FilterManager         *filter.FilterManager                // handles stream filtering rules from configuration
 	importGeneration      atomic.Uint64                        // bumped on each committed import so cached playlists are not reused across imports
 	groupIndex            atomic.Pointer[map[string]struct{}]  // lowercased set of known group titles, rebuilt on each committed import
-	nameIndex             atomic.Pointer[map[string]string]   // sanitized channel name -> real channel name, rebuilt on each committed import
+	nameIndex             atomic.Pointer[map[string]string]    // sanitized channel name -> real channel name, rebuilt on each committed import
 }
 
 // New creates and initializes a new StreamProxy instance with all required dependencies.
@@ -1179,9 +1179,9 @@ func (sp *StreamProxy) cleanupChannelRestreamer(channel *types.Channel, now int6
 					channel.Restreamer = nil
 				}
 			default:
-				// only clean up if ManualSwitch is not in progress
+				// only clean up if a switch is not in progress
 				// during a switch Running briefly goes false but the restreamer is still needed
-				if channel.Restreamer.ManualSwitch.Load() {
+				if channel.Restreamer.SwitchPending() {
 					logger.Debug("{proxy/stream - RestreamCleanup} Channel %s: Skipping cleanup, manual switch in progress", channel.Name)
 					break
 				}
